@@ -39,26 +39,26 @@ static int get_ips(char *addrs[], size_t max_addrs) {
 	for (ifa = ifaddr, n = 0; ifa != NULL; ifa = ifa->ifa_next, n++) {
 		if (ifa->ifa_addr == NULL)
         	continue;
+		
+		if (ifa->ifa_addr->sa_family == AF_INET) { // only ipv4
+			char host[NI_MAXHOST];
+			int ret = getnameinfo(ifa->ifa_addr,
+					      sizeof(struct sockaddr_in),
+					      host, NI_MAXHOST,
+					      NULL, 0, NI_NUMERICHOST);
+			char *address = (ret == 0) ? host : "";
+			if (strncmp(address, "127", 3) == 0) // skip loopback addresses
+				continue;
 
-        if (ifa->ifa_addr->sa_family == AF_INET) { // only ipv4
-        	char host[NI_MAXHOST];
-        	int ret = getnameinfo(ifa->ifa_addr,
-						   		 sizeof(struct sockaddr_in),
-                           		 host, NI_MAXHOST,
-                           		 NULL, 0, NI_NUMERICHOST);
-            char *address = (ret == 0) ? host : "";
-            if (strncmp(address, "127", 3) == 0) // skip loopback addresses
-            	continue;
-            
-            char *entry = malloc(MAX_IP_ENTRY_SIZE);
-        	char *interface = ifa->ifa_name;
-            sprintf(entry, "%s@%s", address, interface);
-            addrs[i] = entry;
-            i++;
+			char *entry = malloc(MAX_IP_ENTRY_SIZE);
+			char *interface = ifa->ifa_name;
+			sprintf(entry, "%s@%s", address, interface);
+			addrs[i] = entry;
+			i++;
 
-            if (i > max_addrs)
-            	break;
-        }
+			if (i > max_addrs)
+				break;
+		}
 	}
 	
 	return i;
@@ -73,7 +73,7 @@ static int get_ips(char *addrs[], size_t max_addrs) {
  */
 static int is_internal_ip(char *_addr) {
 	int priv = 0;
-	
+
 	/* Copy the IP address to a new buffer, because
 	   strtok modifies its argument */	
 	char addr[16];
@@ -88,7 +88,7 @@ static int is_internal_ip(char *_addr) {
 	sp = strtok(NULL, ".");
 	long f = strtol(fp, NULL, 10);
 	long s = strtol(sp, NULL, 10);
-	
+
 	// check if IPv4 is private base on first two numbers
 	if ( f == 10 || f == 127 ||
 		(f == 100 && s >= 64 && s <= 127) ||
