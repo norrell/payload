@@ -116,7 +116,7 @@ char *get_beacon(void) {
 	char *username = malloc(BEACON_FIELD_MAX_SIZE);
 	char *os = malloc(BEACON_FIELD_MAX_SIZE);
 	char admin;
-	
+
 	// Get hostname
 	int r = gethostname(hostname, BEACON_FIELD_MAX_SIZE);
 	if (r == -1) {
@@ -124,7 +124,7 @@ char *get_beacon(void) {
 		sprintf(hostname, "");
 	}
 	pos = append_buff(pos, "    <HostName>%s</HostName>\n", hostname);
-	
+
 	// Get IPs
 	char *ips[MAX_IPS];
 	int n = get_ips(ips, MAX_IPS);
@@ -148,7 +148,7 @@ char *get_beacon(void) {
 		sprintf(username, "");
 	}
 	pos = append_buff(pos, "    <CurrentUser>%s</CurrentUser>\n", username);
-	
+
 	// Get OS
 	struct utsname utsn;
 	r = uname(&utsn);
@@ -159,17 +159,17 @@ char *get_beacon(void) {
 		sprintf(os, "%s", utsn.sysname); // release, version
 	}
 	pos = append_buff(pos, "    <OS>%s</OS>\n", os);
-	
+
 	// Get Admin
 	uid_t uid = getuid();
 	admin = (uid == 0 || euid == 0) ? 'Y' : 'N';
 	pos = append_buff(pos, "    <Admin>%c</Admin>\n", admin);
 	pos = append_buff(pos, "</Beacon>\n", os);
-	
+
 	free(hostname);
 	free(username);
 	free(os);
-	
+
 	return beacon;
 }
 
