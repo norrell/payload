@@ -4,39 +4,43 @@
  * 2. Basic ssh client
  * 3. Support for remote forwarded tunnels
  */
- 
+
 #include <libssh/libssh.h>
 #include <libssh/server.h>
 #include <stdio.h>
 #include <unistd.h>
 
-int main(int argc, char *argv[]) {
-		ssh_bind sshbind = ssh_bind_new();
-		ssh_session session = ssh_new();
-		
-		//ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_DSAKEY,
-		//					 "/etc/ssh/ssh_host_dsa_key");
-		ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_RSAKEY,
-							 "/etc/ssh/ssh_host_rsa_key");
-		// only for non-standard port?
-		//ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_BINDPORT, )
+int main(int argc, char *argv[])
+{
+	ssh_bind sshbind = ssh_bind_new();
+	ssh_session session = ssh_new();
 
-		printf("Calling ssh_bind_listen...\n");
-		if (ssh_bind_listen(sshbind) < 0) {
-			printf("Error listening to socket: %s\n", ssh_get_error(sshbind));
-			return -1;
-		}
-		printf("Calling ssh_bind_accept...\n");
-		if (ssh_bind_accept(sshbind, session) == SSH_ERROR) { // return as soon as
-															  // TCP handshake is done
-			printf("Error accepting a connection: %s\n", ssh_get_error(sshbind));
-			return -1;
-		}
+	//ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_DSAKEY,
+	//                                       "/etc/ssh/ssh_host_dsa_key");
+	ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_RSAKEY,
+			     "/etc/ssh/ssh_host_rsa_key");
+	// only for non-standard port?
+	//ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_BINDPORT, )
 
-		if (ssh_handle_key_exchange(session)) {
-			printf("ssh_handle_kez_exchange: %s:\n", ssh_get_error(session));
-			return -1;
-		}
+	printf("Calling ssh_bind_listen...\n");
+	if (ssh_bind_listen(sshbind) < 0) {
+		printf("Error listening to socket: %s\n",
+		       ssh_get_error(sshbind));
+		return -1;
+	}
+	printf("Calling ssh_bind_accept...\n");
+	if (ssh_bind_accept(sshbind, session) == SSH_ERROR) {	// return as soon as
+		// TCP handshake is done
+		printf("Error accepting a connection: %s\n",
+		       ssh_get_error(sshbind));
+		return -1;
+	}
+
+	if (ssh_handle_key_exchange(session)) {
+		printf("ssh_handle_kez_exchange: %s:\n",
+		       ssh_get_error(session));
+		return -1;
+	}
 /**
 		int auth = 0;
 		ssh_message message;
@@ -135,9 +139,9 @@ int main(int argc, char *argv[]) {
  	           }
         	}
 		} while (i > 0);
-*/		
-		ssh_disconnect(session);
-		ssh_bind_free(sshbind);
-		ssh_finalize();
-		return 0;
+*/
+	ssh_disconnect(session);
+	ssh_bind_free(sshbind);
+	ssh_finalize();
+	return 0;
 }

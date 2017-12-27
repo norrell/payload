@@ -27,7 +27,8 @@
  *
  * Returns the number of IPv4 addresses found.
  */
-static int get_ips(char *addrs[], size_t max_addrs) {
+static int get_ips(char *addrs[], size_t max_addrs)
+{
 	addrs[0] = NULL;
 	struct ifaddrs *ifaddr, *ifa;
 	if (getifaddrs(&ifaddr) == -1) {
@@ -38,16 +39,16 @@ static int get_ips(char *addrs[], size_t max_addrs) {
 	int n, i = 0;
 	for (ifa = ifaddr, n = 0; ifa != NULL; ifa = ifa->ifa_next, n++) {
 		if (ifa->ifa_addr == NULL)
-        	continue;
-		
-		if (ifa->ifa_addr->sa_family == AF_INET) { // only ipv4
+			continue;
+
+		if (ifa->ifa_addr->sa_family == AF_INET) {	// only ipv4
 			char host[NI_MAXHOST];
 			int ret = getnameinfo(ifa->ifa_addr,
 					      sizeof(struct sockaddr_in),
 					      host, NI_MAXHOST,
 					      NULL, 0, NI_NUMERICHOST);
 			char *address = (ret == 0) ? host : "";
-			if (strncmp(address, "127", 3) == 0) // skip loopback addresses
+			if (strncmp(address, "127", 3) == 0)	// skip loopback addresses
 				continue;
 
 			char *entry = malloc(MAX_IP_ENTRY_SIZE);
@@ -60,7 +61,7 @@ static int get_ips(char *addrs[], size_t max_addrs) {
 				break;
 		}
 	}
-	
+
 	return i;
 }
 
@@ -71,14 +72,15 @@ static int get_ips(char *addrs[], size_t max_addrs) {
  *
  * Returns 1 if address is internal, 0 otherwise.
  */
-static int is_internal_ip(char *_addr) {
+static int is_internal_ip(char *_addr)
+{
 	int priv = 0;
 
 	/* Copy the IP address to a new buffer, because
-	   strtok modifies its argument */	
+	   strtok modifies its argument */
 	char addr[16];
 	char *at = strchr(_addr, '@');
-	int addr_len = (int) (at - _addr);
+	int addr_len = (int)(at - _addr);
 	strncpy(addr, _addr, addr_len);
 	addr[addr_len + 1] = '\0';
 
@@ -90,13 +92,12 @@ static int is_internal_ip(char *_addr) {
 	long s = strtol(sp, NULL, 10);
 
 	// check if IPv4 is private base on first two numbers
-	if ( f == 10 || f == 127 ||
-		(f == 100 && s >= 64 && s <= 127) ||
-		(f == 172 && s >= 16 && s <= 31) ||
-		(f == 169 && s == 254) ||
-		(f == 192 &&  s == 168))
+	if (f == 10 || f == 127 ||
+	    (f == 100 && s >= 64 && s <= 127) ||
+	    (f == 172 && s >= 16 && s <= 31) ||
+	    (f == 169 && s == 254) || (f == 192 && s == 168))
 		priv = 1;
-	
+
 	return priv;
 }
 
@@ -104,7 +105,8 @@ static int is_internal_ip(char *_addr) {
 #define BEACON_FIELD_MAX_SIZE 128
 #define MAX_IPS 100
 
-char *get_beacon(void) {
+char *get_beacon(void)
+{
 	char *beacon = malloc(BEACON_MAX_SIZE);
 	if (beacon == NULL)
 		return NULL;
@@ -131,9 +133,15 @@ char *get_beacon(void) {
 	int i;
 	for (i = 0; i < n; i++) {
 		if (is_internal_ip(ips[i])) {
-			pos = append_buff(pos, "    <InternalIP>%s</InternalIP>\n", ips[i]);
+			pos =
+			    append_buff(pos,
+					"    <InternalIP>%s</InternalIP>\n",
+					ips[i]);
 		} else {
-			pos = append_buff(pos, "    <ExternalIP>%s</ExternalIP>\n", ips[i]);
+			pos =
+			    append_buff(pos,
+					"    <ExternalIP>%s</ExternalIP>\n",
+					ips[i]);
 		}
 	}
 
@@ -156,7 +164,7 @@ char *get_beacon(void) {
 		fprintf(stderr, "uname: %s\n", strerror(errno));
 		sprintf(os, "");
 	} else {
-		sprintf(os, "%s", utsn.sysname); // release, version
+		sprintf(os, "%s", utsn.sysname);	// release, version
 	}
 	pos = append_buff(pos, "    <OS>%s</OS>\n", os);
 
@@ -172,4 +180,3 @@ char *get_beacon(void) {
 
 	return beacon;
 }
-

