@@ -4,6 +4,7 @@
 #define GREEN(x)    "\e[32m"x"\e[0m"
 #define RED(x)      "\e[31m"x"\e[0m"
 #define YELLOW(x)   "\e[33m"x"\e[0m"
+#define BLUE(x)     "\e[96m"x"\e[0m"
 //#define RESET "\e[0m"
 
 #endif

