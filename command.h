@@ -11,6 +11,6 @@ struct command {
 	int ret;
 };
 
-void exec_commands(char *beacon_response);
+void parse_and_exec(char *beacon_response);
 
 #endif

