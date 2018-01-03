@@ -21,7 +21,6 @@
 #define USERNAME "payload"
 #define PASSWORD "password"
 
-
 static void handle_sigchld(int sig)
 {
 	int saved_errno = errno;
@@ -128,7 +127,6 @@ static int connect_to_local_service(int port)
 	return sockfd;
 }
 
-
 #define CLIENT_SENT_EOF -6
 #define SERVICE_SENT_EOF -5
 #define SERVICE_CONN_ERROR -4
@@ -138,18 +136,18 @@ static int connect_to_local_service(int port)
 static int do_remote_forwarding_loop(ssh_session session,
 				     ssh_channel channel, int lport)
 {
-    /* Connect to the service */
-    int sockfd;
-    int rc;
-    printf(YELLOW("[OTCP] Connecting to localhost:%d..."), lport);
-    rc = connect_to_local_service(lport);
-    if (rc == -1) {
-        printf(RED("failed\n"));
-        return SERVICE_CONN_ERROR;
-    }
-    printf(YELLOW("done\n"));
+	/* Connect to the service */
+	int sockfd;
+	int rc;
+	printf(YELLOW("[OTCP] Connecting to localhost:%d..."), lport);
+	rc = connect_to_local_service(lport);
+	if (rc == -1) {
+		printf(RED("failed\n"));
+		return SERVICE_CONN_ERROR;
+	}
+	printf(YELLOW("done\n"));
 
-    sockfd = rc;
+	sockfd = rc;
 
 	int nbytes = 0, nwritten = 0;
 
@@ -159,105 +157,114 @@ static int do_remote_forwarding_loop(ssh_session session,
 		printf("[DEBUG] malloc\n");
 		return SYSTEM_ERROR;
 	}
-
 #define EVENTS (POLLIN | POLLPRI)
-    int ssh_fd = ssh_get_fd(session);
-    struct pollfd fds[2];
-    fds[0].fd = ssh_fd;
-    fds[0].events = EVENTS;
-    fds[1].fd = sockfd;
-    fds[1].events = EVENTS;
+	int ssh_fd = ssh_get_fd(session);
+	struct pollfd fds[2];
+	fds[0].fd = ssh_fd;
+	fds[0].events = EVENTS;
+	fds[1].fd = sockfd;
+	fds[1].events = EVENTS;
 
-    while (1) {
-        rc = poll(fds, 2, -1);
-        if (rc == -1) {
-            break;
-        }
+	while (1) {
+		rc = poll(fds, 2, -1);
+		if (rc == -1) {
+			break;
+		}
 
-        if (fds[0].revents & POLLIN) {
-            nbytes =
-                ssh_channel_read_nonblocking(channel, buffer,
-                             BUF_SIZE, 0);
-            if (nbytes == 0) {
-                if (ssh_channel_is_eof(channel) ||
-                    !ssh_channel_is_open(channel)) {
-                    free(buffer);
-                    close(sockfd);
-                    return SSH_SENT_EOF;
-                }
-            }
-            if (nbytes == SSH_ERROR) {
-                printf(RED
-                       ("[DEBUG] ssh_channel_read_nonblocking: %s\n"),
-                       ssh_get_error(session));
-                free(buffer);
-                close(sockfd);
-                return SSH_ERROR;
-            }
-            if (nbytes > 0) {
-                printf("[DEBUG] Read %d bytes from SSH tunnel\n", nbytes);
+		if (fds[0].revents & POLLIN) {
+			nbytes =
+			    ssh_channel_read_nonblocking(channel, buffer,
+							 BUF_SIZE, 0);
+			if (nbytes == 0) {
+				if (ssh_channel_is_eof(channel) ||
+				    !ssh_channel_is_open(channel)) {
+					free(buffer);
+					close(sockfd);
+					return SSH_SENT_EOF;
+				}
+			}
+			if (nbytes == SSH_ERROR) {
+				printf(RED
+				       ("[DEBUG] ssh_channel_read_nonblocking: %s\n"),
+				       ssh_get_error(session));
+				free(buffer);
+				close(sockfd);
+				return SSH_ERROR;
+			}
+			if (nbytes > 0) {
+				printf
+				    ("[DEBUG] Read %d bytes from SSH tunnel\n",
+				     nbytes);
 
-                /* Write to service */
-                int tot_sent = 0;
-                while (tot_sent < nbytes) {
-                    nwritten = send(sockfd,
-                            buffer + tot_sent,
-                            nbytes - tot_sent, MSG_DONTWAIT);
-                    if (nwritten < 0) {
-                        if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                            free(buffer);
-                            close(sockfd);
-                            return SERVICE_CONN_ERROR;
-                        }
-                    } else {
-                        tot_sent += nwritten;
-                        printf("[DEBUG] Sent %d bytes to service\n", nwritten);
-                    }
-                }
-            } else {
-                /* Assume client has closed connection
-                   to rport on remote side */
-                free(buffer);
-                close(sockfd);
-                return CLIENT_SENT_EOF;
-            }
-        }
+				/* Write to service */
+				int tot_sent = 0;
+				while (tot_sent < nbytes) {
+					nwritten = send(sockfd,
+							buffer + tot_sent,
+							nbytes - tot_sent,
+							MSG_DONTWAIT);
+					if (nwritten < 0) {
+						if (errno != EAGAIN
+						    && errno != EWOULDBLOCK) {
+							free(buffer);
+							close(sockfd);
+							return
+							    SERVICE_CONN_ERROR;
+						}
+					} else {
+						tot_sent += nwritten;
+						printf
+						    ("[DEBUG] Sent %d bytes to service\n",
+						     nwritten);
+					}
+				}
+			} else {
+				/* Assume client has closed connection
+				   to rport on remote side */
+				free(buffer);
+				close(sockfd);
+				return CLIENT_SENT_EOF;
+			}
+		}
 
-        if (fds[1].revents & POLLIN) {
-            nbytes = recv(sockfd, buffer, BUF_SIZE, MSG_DONTWAIT);
-            if (nbytes < 0) {
-                if(errno != EAGAIN && errno != EWOULDBLOCK) {
-                    printf(RED("recv: %s\n"), strerror(errno));
-                    free(buffer);
-                    close(sockfd);
-                    return SERVICE_CONN_ERROR;
-                }
-            } else if (nbytes == 0) {
-                printf(RED("recv: EOF\n"));
-                free(buffer);
-                close(sockfd);
-                return SERVICE_SENT_EOF;
-            }
-            printf("[DEBUG] Read %d bytes from service\n", nbytes);
+		if (fds[1].revents & POLLIN) {
+			nbytes = recv(sockfd, buffer, BUF_SIZE, MSG_DONTWAIT);
+			if (nbytes < 0) {
+				if (errno != EAGAIN && errno != EWOULDBLOCK) {
+					printf(RED("recv: %s\n"),
+					       strerror(errno));
+					free(buffer);
+					close(sockfd);
+					return SERVICE_CONN_ERROR;
+				}
+			} else if (nbytes == 0) {
+				printf(RED("recv: EOF\n"));
+				free(buffer);
+				close(sockfd);
+				return SERVICE_SENT_EOF;
+			}
+			printf("[DEBUG] Read %d bytes from service\n", nbytes);
 
-            int tot_sent = 0;
-            while (tot_sent < nbytes) {
-                nwritten = ssh_channel_write(channel,
-                                 buffer + tot_sent,
-                                 nbytes - tot_sent);
-                if (nwritten == SSH_ERROR) {
-                    printf(RED("ssh_channel_write: %s\n"),
-                           ssh_get_error(session));
-                    free(buffer);
-                    close(sockfd);
-                    return SSH_ERROR;
-                } else {
-                    tot_sent += nwritten;
-                    printf("[DEBUG] Sent %d bytes to SSH tunnel\n", nwritten);
-                }
-            }
-        }
-    }
+			int tot_sent = 0;
+			while (tot_sent < nbytes) {
+				nwritten = ssh_channel_write(channel,
+							     buffer + tot_sent,
+							     nbytes - tot_sent);
+				if (nwritten == SSH_ERROR) {
+					printf(RED("ssh_channel_write: %s\n"),
+					       ssh_get_error(session));
+					free(buffer);
+					close(sockfd);
+					return SSH_ERROR;
+				} else {
+					tot_sent += nwritten;
+					printf
+					    ("[DEBUG] Sent %d bytes to SSH tunnel\n",
+					     nwritten);
+				}
+			}
+		}
+	}
 }
 
 static int do_remote_forwarding(int lport, int rport)
@@ -277,50 +284,49 @@ static int do_remote_forwarding(int lport, int rport)
 	if (rc != SSH_OK) {
 		printf(RED("failed: %s\n"), ssh_get_error(sess));
 		ssh_disconnect(sess);
-        ssh_free(sess);
-        return -1;
+		ssh_free(sess);
+		return -1;
 	}
 	printf(YELLOW("done\n"));
 
-    while (1) {
-        int dport = 0;      // The port bound on the server, here: 8080
-        printf(YELLOW("[OTCP] Waiting for incoming connection..."));
-        fflush(stdout);
+	while (1) {
+		int dport = 0;	// The port bound on the server, here: 8080
+		printf(YELLOW("[OTCP] Waiting for incoming connection..."));
+		fflush(stdout);
 
 #define ACCEPT_FORWARD_TIMEOUT 120000
-    	ssh_channel chan = ssh_channel_accept_forward(sess,
-    						      ACCEPT_FORWARD_TIMEOUT,
-    						      &dport);
-    	if (chan == NULL) {
-    		printf(RED("failed: %s\n"), ssh_get_error(sess));
-    		ssh_disconnect(sess);
-            ssh_free(sess);
-            return -1;
-    	}
-    	printf(YELLOW("\n[OTCP] Connection received\n"));
+		ssh_channel chan = ssh_channel_accept_forward(sess,
+							      ACCEPT_FORWARD_TIMEOUT,
+							      &dport);
+		if (chan == NULL) {
+			printf(RED("failed: %s\n"), ssh_get_error(sess));
+			ssh_disconnect(sess);
+			ssh_free(sess);
+			return -1;
+		}
+		printf(YELLOW("\n[OTCP] Connection received\n"));
 
-    	rc = do_remote_forwarding_loop(sess, chan, lport);
-        if (rc == SSH_SENT_EOF || rc == SSH_ERROR ||
-            rc == SYSTEM_ERROR) {
-            printf(YELLOW("[OTCP] Terminate SSH channel\n"));
-            ssh_channel_send_eof(chan);
-            ssh_channel_free(chan);
-            ssh_disconnect(sess);
-            ssh_free(sess);
-            return 1;
-        } else {
-            /* The service has either sent EOF
-               or an error condition occurred, but
-               the tunnel is still open.
-               Accept a new connection. */
-            printf("[DEBUG] Service disconnected\n");
-            ssh_channel_send_eof(chan);
-            printf("[DEBUG] Sent SSH EOF\n");
-            ssh_channel_free(chan);
-            printf("[DEBUG] Freed channel\n");
-            continue;
-        }
-    }
+		rc = do_remote_forwarding_loop(sess, chan, lport);
+		if (rc == SSH_SENT_EOF || rc == SSH_ERROR || rc == SYSTEM_ERROR) {
+			printf(YELLOW("[OTCP] Terminate SSH channel\n"));
+			ssh_channel_send_eof(chan);
+			ssh_channel_free(chan);
+			ssh_disconnect(sess);
+			ssh_free(sess);
+			return 1;
+		} else {
+			/* The service has either sent EOF
+			   or an error condition occurred, but
+			   the tunnel is still open.
+			   Accept a new connection. */
+			printf("[DEBUG] Service disconnected\n");
+			ssh_channel_send_eof(chan);
+			printf("[DEBUG] Sent SSH EOF\n");
+			ssh_channel_free(chan);
+			printf("[DEBUG] Freed channel\n");
+			continue;
+		}
+	}
 }
 
 /* OpenSSH command equivalent:
