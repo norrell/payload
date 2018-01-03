@@ -21,21 +21,19 @@
 #define USERNAME "payload"
 #define PASSWORD "password"
 
-static void handle_sigchld(int sig)
+volatile sig_atomic_t should_terminate = 0;
+
+static void signal_terminate(int sig)
 {
-	int saved_errno = errno;
-	while (waitpid(-1, 0, WNOHANG) > 0)	/* Possibly save exit status */
-		;
-	errno = saved_errno;
+	should_terminate = 1;
 }
 
-static int register_sigchld_handler()
+static int register_sigterm_handler()
 {
 	struct sigaction sa;
-	sa.sa_handler = &handle_sigchld;
+	sa.sa_handler = &signal_terminate;
 	sigemptyset(&sa.sa_mask);
-	sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
-	if (sigaction(SIGCHLD, &sa, 0) == -1)
+	if (sigaction(SIGTERM, &sa, 0) == -1)
 		return -1;
 
 	return 0;
@@ -165,10 +163,12 @@ static int do_remote_forwarding_loop(ssh_session session,
 	fds[1].fd = sockfd;
 	fds[1].events = EVENTS;
 
-	while (1) {
+	while (!should_terminate) {
 		rc = poll(fds, 2, -1);
 		if (rc == -1) {
-			break;
+			free(buffer);
+			close(sockfd);
+			return SYSTEM_ERROR;
 		}
 
 		if (fds[0].revents & POLLIN) {
@@ -267,8 +267,15 @@ static int do_remote_forwarding_loop(ssh_session session,
 	}
 }
 
-static int do_remote_forwarding(int lport, int rport)
+int do_remote_forwarding(int lport, int rport)
 {
+	printf(RED("Registering SIGTERM handler..."));
+	if (register_sigterm_handler() == -1) {
+		printf(RED("failed\n"));
+		return -1;
+	}
+	printf("done\n");
+
 	int rc;
 
 	printf(YELLOW("[OTCP] Establishing SSH tunnel to server..."));
@@ -289,20 +296,25 @@ static int do_remote_forwarding(int lport, int rport)
 	}
 	printf(YELLOW("done\n"));
 
-	while (1) {
+	while (!should_terminate) {
 		int dport = 0;	// The port bound on the server, here: 8080
 		printf(YELLOW("[OTCP] Waiting for incoming connection..."));
 		fflush(stdout);
 
-#define ACCEPT_FORWARD_TIMEOUT 120000
+#define ACCEPT_FORWARD_TIMEOUT 15000	// ms
 		ssh_channel chan = ssh_channel_accept_forward(sess,
 							      ACCEPT_FORWARD_TIMEOUT,
 							      &dport);
 		if (chan == NULL) {
-			printf(RED("failed: %s\n"), ssh_get_error(sess));
-			ssh_disconnect(sess);
-			ssh_free(sess);
-			return -1;
+			if (ssh_get_error_code(sess) != 0) {	/* Timed out */
+				printf(RED("failed: %s\n"),
+				       ssh_get_error(sess));
+				ssh_disconnect(sess);
+				ssh_free(sess);
+				return -1;
+			} else {
+				continue;
+			}
 		}
 		printf(YELLOW("\n[OTCP] Connection received\n"));
 
@@ -327,42 +339,8 @@ static int do_remote_forwarding(int lport, int rport)
 			continue;
 		}
 	}
-}
 
-/* OpenSSH command equivalent:
- * ssh <ssh-server> -p <ssh-server-port> -R <rport>:<laddress>:<lport>
- *
- * lport:   port to forward to once tunnel established
- * rport:   port the ssh server will be listening on
- */
-int remote_forwarding(int lport, int rport)
-{
-	if ((rport < 1 || rport > 65535) || (lport < 1 || lport > 65535))
-		return -1;
-
-	printf(BLUE("[*] Registering SIGCHLD handler for new process..."));
-	if (register_sigchld_handler() == -1) {
-		printf(RED("failed\n"));
-		return -1;
-	}
-	printf(BLUE("done\n"));
-
-	int ret;
-	switch (fork()) {
-	case -1:		/* Error */
-		printf(RED("[*] Fork error\n"));
-		ret = -1;
-		break;
-	case 0:		/* Child, do tunnel */
-		ret = do_remote_forwarding(lport, rport);
-		printf(YELLOW("[OTCP] Executing terminated with status %d\n"),
-		       ret);
-		_exit(ret);
-	default:		/* Parent, go back to execution loop */
-		printf(BLUE("[*] Remote port forwarding launched\n"));
-		ret = 1;	/* SUCC */
-		break;
-	}
-
-	return ret;
+	ssh_disconnect(sess);
+	ssh_free(sess);
+	return 1;
 }

