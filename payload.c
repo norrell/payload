@@ -637,7 +637,7 @@ static void parse_and_exec(char *beacon_response)
 		       curr_cmd->id);
 		curr_cmd->ret = exec_command(curr_cmd->type, curr_cmd->param);
 		printf("[*] Command [%d] status: %s\n", curr_cmd->id,
-		       (curr_cmd->ret == EXEC_SUCCESS) ? GREEN("V") : RED("X"));
+		       (curr_cmd->ret == EXEC_SUCCESS) ? "V" : "X");
 		curr_cmd = curr_cmd->next;
 
 		// do something with the ret value...
