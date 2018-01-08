@@ -19,6 +19,6 @@ struct process {
 	volatile sig_atomic_t is_alive;
 };
 
-void parse_and_exec(char *beacon_response);
+//void parse_and_exec(char *beacon_response);
 
 #endif
