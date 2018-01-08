@@ -27,10 +27,10 @@
 # include <ws2tcpip.h>
 # include <windows.h>
 # include <iphlpapi.h>
-# pragma comment(lib, "Advapi32.lib")
+# pragma comment(lib, "advapi32.lib")
 # pragma comment(lib, "iphlpapi.lib")
-# pragma comment(lib, "Ws2_32.lib")
-# pragma comment(lib, "Mincore.lib") // -lVersion
+# pragma comment(lib, "ws2_32.lib")
+# pragma comment(lib, "version.lib") // -lVersion
 #else
 # include <unistd.h>
 # include <errno.h>
